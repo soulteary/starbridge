@@ -7,9 +7,21 @@ root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 temporary=$(mktemp -d "${TMPDIR:-/tmp}/starbridge-package-test.XXXXXXXX")
 trap 'rm -rf "$temporary"' EXIT HUP INT TERM
 mkdir -p "$temporary/bin"
+FAKE_GO_TOOLCHAIN="go$(cat "$root/.go-version")"
+export FAKE_GO_TOOLCHAIN
 cat > "$temporary/bin/go" <<'FAKE_GO'
 #!/bin/sh
 set -eu
+case "${1:-}" in
+  env)
+    [ "$#" -eq 2 ] && [ "$2" = GOVERSION ]
+    printf '%s\n' "$FAKE_GO_TOOLCHAIN"
+    exit 0 ;;
+  version)
+    [ "$#" -eq 3 ] && [ "$2" = -m ] && [ -f "$3" ]
+    printf '%s: %s\n' "$3" "${FAKE_GO_BINARY_VERSION:-$FAKE_GO_TOOLCHAIN}"
+    exit 0 ;;
+esac
 [ "$1" = build ]
 [ "$CGO_ENABLED" = 0 ]
 [ "$GOOS" = darwin ]
@@ -103,6 +115,7 @@ for version in \
     cmp "$temporary/expected-binary" "$package/starbridge"
     grep -Fx "version=$normalized" "$package/BUILD.txt" > /dev/null
     grep -Fx "arch=$architecture" "$package/BUILD.txt" > /dev/null
+    grep -Fx "go_version=$FAKE_GO_TOOLCHAIN" "$package/BUILD.txt" > /dev/null
     "$root/scripts/check-package-docs.sh" "$package"
   done
   checks=$((checks + 1))
@@ -130,6 +143,40 @@ git -C "$fixture" -c init.defaultBranch=package-test init -q
 git -C "$fixture" add -A
 git -C "$fixture" -c commit.gpgsign=false -c core.hooksPath=/dev/null \
   -c user.name='Package test' -c user.email='package-test@example.invalid' commit -qm fixture
+
+# Refuse both an incorrectly selected toolchain and an incorrectly built binary.
+# Check the real workflow contract without compiling or installing any Go version.
+if FAKE_GO_TOOLCHAIN=go0.0.0 FAKE_GO_VERSION=1.2.6 FAKE_GO_LOG="$temporary/wrong-toolchain-builds" \
+    STARBRIDGE_DIST_DIR="$temporary/wrong-toolchain-dist" "$fixture/scripts/package-release.sh" 1.2.6 > "$temporary/wrong-toolchain-output" 2>&1; then
+  printf '%s\n' 'Wrong release toolchain was accepted.' >&2
+  exit 1
+fi
+[ ! -e "$temporary/wrong-toolchain-builds" ]
+grep -F 'Release builds require' "$temporary/wrong-toolchain-output" > /dev/null
+if FAKE_GO_BINARY_VERSION=go0.0.0 FAKE_GO_VERSION=1.2.6 FAKE_GO_LOG="$temporary/wrong-binary-builds" \
+    STARBRIDGE_DIST_DIR="$temporary/wrong-binary-dist" "$fixture/scripts/package-release.sh" 1.2.6 > "$temporary/wrong-binary-output" 2>&1; then
+  printf '%s\n' 'Wrong binary toolchain metadata was accepted.' >&2
+  exit 1
+fi
+grep -F 'release toolchain must be' "$temporary/wrong-binary-output" > /dev/null
+[ ! -e "$temporary/wrong-binary-dist/starbridge_1.2.6_darwin_arm64.tar.gz" ]
+for notice_part in summary component runtime; do
+  awk -v part="$notice_part" '
+    part == "summary" && /^本清单根据/ { sub(/Go [0-9]+\.[0-9]+\.[0-9]+/, "Go 0.0.0") }
+    part == "component" && /^- Go runtime and standard library / { sub(/go[0-9]+\.[0-9]+\.[0-9]+/, "go0.0.0") }
+    part == "runtime" && /^## Go runtime and standard library / { sub(/go[0-9]+\.[0-9]+\.[0-9]+/, "go0.0.0") }
+    { print }
+  ' "$root/THIRD_PARTY_NOTICES.md" > "$fixture/THIRD_PARTY_NOTICES.md"
+  if FAKE_GO_VERSION=1.2.6 FAKE_GO_LOG="$temporary/wrong-notice-builds" STARBRIDGE_DIST_DIR="$temporary/wrong-notice-dist" \
+      "$fixture/scripts/package-release.sh" 1.2.6 > "$temporary/wrong-notice-output" 2>&1; then
+    printf 'Mismatched notice %s was accepted.\n' "$notice_part" >&2
+    exit 1
+  fi
+  [ ! -e "$temporary/wrong-notice-builds" ]
+  grep -F 'THIRD_PARTY_NOTICES.md must consistently describe' "$temporary/wrong-notice-output" > /dev/null
+done
+cp "$root/THIRD_PARTY_NOTICES.md" "$fixture/THIRD_PARTY_NOTICES.md"
+[ -z "$(git -C "$fixture" status --porcelain)" ]
 printf 'fixture-only ignored secret\n' > "$fixture/docs/.DS_Store"
 printf '{"fixture-only-local-secret":true}\n' > "$fixture/examples/recycle-policy.local.json"
 printf 'fixture-only ignored test data\n' > "$fixture/tests/windows/.DS_Store"
@@ -229,4 +276,5 @@ for release_case in \
 done
 printf 'Release packaging checks passed: %s version/argument cases; paired archives, checksums and documentation links verified.\n' "$checks"
 printf '%s\n' 'Tracked-file packaging checks passed: ignored/untracked exclusion, dirty changes, index edits and unsafe-file rejection.'
+printf '%s\n' 'Release toolchain checks passed: binary metadata and all three notice version declarations match; five mismatch cases rejected.'
 printf 'Release publication argument checks passed: %s stable/prerelease cases using the workflow command block.\n' "$publish_checks"

@@ -23,6 +23,19 @@ if ! printf '%s\n' "$version" | LC_ALL=C grep -Eq "$semver"; then
 fi
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$root"
+release_go=$(cat .go-version)
+expected_go="go$release_go"
+actual_go=$(go env GOVERSION)
+if [ "$actual_go" != "$expected_go" ]; then
+  printf 'Release builds require %s; selected toolchain is %s. Choose the matching installed Go toolchain.\n' "$expected_go" "$actual_go" >&2
+  exit 1
+fi
+if ! grep -Fq "Go $release_go 运行时与标准库" THIRD_PARTY_NOTICES.md || \
+   ! grep -Fxq -- "- Go runtime and standard library \`$expected_go\`" THIRD_PARTY_NOTICES.md || \
+   ! grep -Fxq "## Go runtime and standard library $expected_go" THIRD_PARTY_NOTICES.md; then
+  printf 'THIRD_PARTY_NOTICES.md must consistently describe release toolchain %s.\n' "$expected_go" >&2
+  exit 1
+fi
 output=${STARBRIDGE_DIST_DIR:-"$root/dist"}
 mkdir -p "$output"
 output=$(CDPATH='' cd -- "$output" && pwd)
@@ -64,6 +77,12 @@ for arch in arm64 amd64; do
   CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" go build -trimpath -buildvcs=false \
     -ldflags "-s -w -X github.com/soulteary/starbridge/internal/version.Version=$version" \
     -o "$package/starbridge" ./cmd/starbridge
+  go version -m "$package/starbridge" > "$staging/buildinfo-$arch"
+  binary_go=$(awk 'NR == 1 { print $NF }' "$staging/buildinfo-$arch")
+  if [ "$binary_go" != "$expected_go" ]; then
+    printf 'Built %s binary uses %s; release toolchain must be %s.\n' "$arch" "$binary_go" "$expected_go" >&2
+    exit 1
+  fi
   tar -xf "$staging/support.tar" -C "$package"
   cat > "$package/INSTALL.txt" <<'INSTALL'
 Starbridge for macOS
@@ -84,8 +103,8 @@ Install it in the guest using guest/windows/README.md. The binary does not
 install files, start VMs or bypass macOS Gatekeeper automatically.
 Optional Windows acceptance scripts and their fixtures are under tests/.
 INSTALL
-  printf 'version=%s\ncommit=%s\ndirty=%s\nos=darwin\narch=%s\nguest_protocol=1\n' \
-    "$version" "$commit" "$dirty" "$arch" > "$package/BUILD.txt"
+  printf 'version=%s\ncommit=%s\ndirty=%s\nos=darwin\narch=%s\nguest_protocol=1\ngo_version=%s\n' \
+    "$version" "$commit" "$dirty" "$arch" "$binary_go" > "$package/BUILD.txt"
   "$root/scripts/check-package-docs.sh" "$package"
   COPYFILE_DISABLE=1 tar -czf "$output/$name.tar.gz" -C "$staging" "$name"
 done

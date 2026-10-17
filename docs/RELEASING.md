@@ -2,6 +2,8 @@
 
 在源码检出目录执行 `scripts/package-release.sh VERSION`，构建 darwin arm64/amd64 两种包。版本必须符合 [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html)，可带一个 `v` 前缀；支持合法的预发布标识与构建元数据。主/次/修订版本及纯数字预发布标识不允许前导零，构建元数据允许。
 
+发布工具链由源码目录的 `.go-version` 固定，当前为 Go 1.27.2；它与 `go.mod` 声明的最低兼容版本不同。普通 CI 继续检查最低版本，Release 检查与构建使用固定发布版本。本地打包需选择匹配的已安装工具链。脚本在构建前检查实际工具链及第三方声明的三处版本，构建后再核对各二进制的 GoVersion，并在 BUILD.txt 记录 `go_version`；版本不一致时拒绝归档。依赖许可原文保持不变，升级发布工具链时须同时核对 Go 许可与专利授权内容。
+
 每个包包含宿主二进制、同一源码快照的 Windows helper、完整 docs、README、贡献说明、go.mod、示例、文档引用的 Windows 验收脚本与夹具、许可和 BUILD.txt（版本、commit、dirty、平台和 guest 协议版本）。随包静态文件仅来自这些范围内的 Git 跟踪路径，读取工作区内容以保留 tracked 修改并记录 dirty；本地 ignored / untracked 文件不入包。缺失的跟踪文件、符号链接或其他非普通文件会使打包失败。包内不包含 Go 源码、Git 数据或 CI 配置；README、CONTRIBUTING 和本页的构建及维护命令面向源码检出目录。`checksums.txt` 使用不含本机绝对路径的文件名。归档前会检查所有随包 Markdown 内联相对链接的文件目标，避免遗漏文档或示例。
 
 ```sh
