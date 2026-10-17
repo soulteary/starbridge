@@ -7,6 +7,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 namespace StarbridgeDeveloperInput {
     public sealed class Rect { public int x,y,width,height; }
+    public sealed class UnicodeInputEvent { public ushort VirtualKey,ScanCode; public uint Flags; }
     public static class Native {
         [StructLayout(LayoutKind.Sequential)] private struct RECT { public int left,top,right,bottom; }
         [StructLayout(LayoutKind.Sequential)] private struct POINT { public int x,y; public POINT(int a,int b) { x=a;y=b; } }
@@ -74,6 +75,10 @@ namespace StarbridgeDeveloperInput {
                 if((GetAsyncKeyState(key)&0x8000)!=0)return false;
             return true;
         }
+        public static bool TextInputIdle() {
+            for(int key=1;key<255;key++)if((GetAsyncKeyState(key)&0x8000)!=0)return false;
+            return true;
+        }
         public static int InputSize() { return Marshal.SizeOf(typeof(INPUT)); }
         private static uint Extended(ushort key) { return (key>=0x21 && key<=0x28)||key==0x2d||key==0x2e ? 1u : 0u; }
         private static INPUT Key(ushort key,bool up) {
@@ -94,6 +99,50 @@ namespace StarbridgeDeveloperInput {
             }
             return events.Count;
         }
+        // Pure event construction is separately testable without touching a
+        // desktop. Preserve every scalar, including CR/LF/Tab, literally.
+        public static UnicodeInputEvent[] BuildUnicodeTextEvents(string text) {
+            if(String.IsNullOrEmpty(text)||text.Length>4096)throw new ArgumentException("Invalid Unicode text.");
+            int points=0;
+            for(int i=0;i<text.Length;i++) {
+                char unit=text[i];
+                if(unit==0)throw new ArgumentException("Invalid Unicode text.");
+                if(Char.IsHighSurrogate(unit)) {
+                    if(i+1>=text.Length||!Char.IsLowSurrogate(text[i+1]))throw new ArgumentException("Invalid Unicode text.");
+                    i++;
+                }else if(Char.IsLowSurrogate(unit))throw new ArgumentException("Invalid Unicode text.");
+                if(++points>2048)throw new ArgumentException("Unicode text exceeds the code-point budget.");
+            }
+            UnicodeInputEvent[] events=new UnicodeInputEvent[text.Length*2];
+            for(int i=0;i<text.Length;i++) {
+                events[i*2]=new UnicodeInputEvent{VirtualKey=0,ScanCode=text[i],Flags=4};
+                events[i*2+1]=new UnicodeInputEvent{VirtualKey=0,ScanCode=text[i],Flags=6};
+            }
+            return events;
+        }
+        private static int InsertUnicodeEvents(UnicodeInputEvent[] events) {
+            INPUT[] inputs=new INPUT[events.Length];
+            for(int i=0;i<events.Length;i++) {
+                inputs[i].type=1;inputs[i].data.keyboard.vk=events[i].VirtualKey;
+                inputs[i].data.keyboard.scan=events[i].ScanCode;inputs[i].data.keyboard.flags=events[i].Flags;
+            }
+            return (int)SendInput((uint)inputs.Length,inputs,InputSize());
+        }
+        // Injection through a delegate lets contract tests simulate a short
+        // SendInput result. Production passes InsertUnicodeEvents exclusively.
+        public static int DispatchUnicodeText(string text,Func<UnicodeInputEvent[],int> insert) {
+            UnicodeInputEvent[] events=BuildUnicodeTextEvents(text);
+            int sent;
+            try { sent=insert(events); }catch { return -1; }
+            if(sent==events.Length)return sent;
+            if(sent>0&&sent<events.Length&&(sent%2)!=0) {
+                // Only release the final unmatched Unicode down event. Never
+                // resend a scalar, the rest of a surrogate pair, or all text.
+                try { insert(new UnicodeInputEvent[]{events[sent]}); }catch {}
+            }
+            return -1;
+        }
+        public static int UnicodeText(string text) { return DispatchUnicodeText(text,InsertUnicodeEvents); }
         public static int NormalizeAbsolute(int position,int origin,int size) {
             if(size<=1||position<origin||(long)position>=(long)origin+size)throw new ArgumentOutOfRangeException();
             return (int)Math.Round(((long)position-origin)*65535.0/(size-1));

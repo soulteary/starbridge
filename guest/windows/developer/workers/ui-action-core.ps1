@@ -1,10 +1,11 @@
 function Resolve-DevUiActionParameters([string]$Name,$Object) {
-    if($Name -cnotin @('ui.act','window.focus','window.resize','input.key','input.mouse')){Stop-DevUi 'INVALID_ARGUMENT' 'Unsupported UI action.'}
+    if($Name -cnotin @('ui.act','window.focus','window.resize','input.key','input.mouse','input.text')){Stop-DevUi 'INVALID_ARGUMENT' 'Unsupported UI action.'}
     $allowed=@('hwnd','pid','start_time_utc','timeout_ms','lock_timeout_ms')
     switch -CaseSensitive($Name){
         'ui.act'{$allowed+=@('operation','selector','ancestor','max_depth','max_scan_nodes','expected_runtime_id','value','horizontal','vertical')}
         'window.resize'{$allowed+=@('width','height','x','y')}
         'input.key'{$allowed+=@('key','modifiers')}
+        'input.text'{$allowed+=@('text')}
         'input.mouse'{$allowed+=@('event','button','x','y','wheel_delta')}
     }
     Assert-DevUiFields $Object $allowed
@@ -68,6 +69,14 @@ function Resolve-DevUiActionParameters([string]$Name,$Object) {
                 $seen.Add($modifier)
             }
             $result['modifiers']=@($seen.ToArray())
+        }
+        'input.text'{
+            $value=Get-DevUiString $Object 'text' '' 2048
+            if($value.Length -eq 0 -or $value.Length -gt 4096){Stop-DevUi 'INVALID_ARGUMENT' 'text must contain 1..2048 valid Unicode code points without NUL.'}
+            # Throw-on-invalid encoding rejects unpaired UTF-16 surrogate units.
+            try{$null=(New-Object Text.UTF8Encoding($false,$true)).GetByteCount($value)}
+            catch{Stop-DevUi 'INVALID_ARGUMENT' 'text must contain valid Unicode without unpaired surrogate units.'}
+            $result['text']=$value
         }
         'input.mouse'{
             $result['event']=Get-DevUiString $Object 'event' 'click' 16
@@ -244,6 +253,17 @@ function Invoke-DevUiActionCore([string]$Name,$Parameters) {
                 if($data.input_count -lt 1){Stop-DevUi 'INPUT_FAILED' 'Input was partially inserted or denied; its outcome is unknown. No action retry was attempted.'}
                 $data['foreground_after']='0x'+[StarbridgeDeveloperInput.Native]::GetForegroundWindow().ToInt64().ToString('x')
             }
+            'input.text'{
+                Assert-DevUiForeground $handle
+                if(![StarbridgeDeveloperInput.Native]::TextInputIdle()){Stop-DevUi 'INPUT_BUSY' 'A keyboard key or mouse button is already held; no text was sent.'}
+                $null=Assert-DevUiWindow $Parameters
+                Assert-DevUiMutationContext $Parameters $handle $Name
+                Assert-DevUiForeground $handle
+                if(![StarbridgeDeveloperInput.Native]::TextInputIdle()){Stop-DevUi 'INPUT_BUSY' 'A keyboard key or mouse button is already held; no text was sent.'}
+                $dispatched=Invoke-DevUiTextDispatch $Parameters
+                foreach($key in $dispatched.Keys){$data[$key]=$dispatched[$key]}
+                $data['foreground_after']='0x'+[StarbridgeDeveloperInput.Native]::GetForegroundWindow().ToInt64().ToString('x')
+            }
             'input.mouse'{
                 $previousDpi=[StarbridgeDeveloperUi.Native]::EnterDpi()
                 if($previousDpi -eq [IntPtr]::Zero){Stop-DevUi 'DPI_CONTEXT_UNAVAILABLE' 'Mouse coordinates require a per-monitor DPI context.'}
@@ -264,4 +284,16 @@ function Invoke-DevUiActionCore([string]$Name,$Parameters) {
         [StarbridgeDeveloperUi.Native]::LeaveDpi($previousDpi)
         if($null -ne $lease){try{$lease.ReleaseMutex()}finally{$lease.Dispose()}}
     }
+}
+
+function Send-DevUiUnicodeText([string]$Text) {
+    return [StarbridgeDeveloperInput.Native]::UnicodeText($Text)
+}
+
+function Invoke-DevUiTextDispatch($Parameters) {
+    $script:DevUiMutationBegan=$true
+    try{$count=Send-DevUiUnicodeText $Parameters.text}
+    catch{Stop-DevUi 'INPUT_FAILED' 'Text input was not confirmed; its outcome is unknown. Inspect state before another write.'}
+    if($count -ne $Parameters.text.Length*2){Stop-DevUi 'INPUT_FAILED' 'Text input was partially inserted or denied; its outcome is unknown. No text retry was attempted.'}
+    return ,[ordered]@{input_count=$count;code_point_count=(Get-DevUiCodePointLength $Parameters.text);utf16_unit_count=$Parameters.text.Length;newline_policy='literal'}
 }

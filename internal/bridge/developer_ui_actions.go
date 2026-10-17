@@ -238,8 +238,11 @@ func validDeveloperUIActionResult(name string, data map[string]any) bool {
 		allowed = append(allowed, "operation", "element")
 	case "window.resize":
 		allowed = append(allowed, "rect", "coordinate_space")
-	case "input.key", "input.mouse":
+	case "input.key", "input.mouse", "input.text":
 		allowed = append(allowed, "input_count", "foreground_after")
+		if name == "input.text" {
+			allowed = append(allowed, "code_point_count", "utf16_unit_count", "newline_policy")
+		}
 	}
 	if uiQueryFields(data, allowed...) != nil {
 		return false
@@ -299,6 +302,22 @@ func validDeveloperUIActionResult(name string, data map[string]any) bool {
 	}
 	if name == "input.key" || name == "input.mouse" {
 		if !responseInteger(data["input_count"], 1, 12) || !textValue(data["foreground_after"]) {
+			return false
+		}
+	}
+	if name == "input.text" {
+		if !responseInteger(data["input_count"], 2, maxDeveloperTextEvents) ||
+			!responseInteger(data["code_point_count"], 1, maxDeveloperTextCodePoints) ||
+			!responseInteger(data["utf16_unit_count"], 1, 2*maxDeveloperTextCodePoints) || data["newline_policy"] != "literal" {
+			return false
+		}
+		if _, valid := parseHWND(data["foreground_after"]); !valid && data["foreground_after"] != "0x0" {
+			return false
+		}
+		count, _ := integral(data["input_count"])
+		points, _ := integral(data["code_point_count"])
+		units, _ := integral(data["utf16_unit_count"])
+		if count != units*2 || units < points || units > points*2 {
 			return false
 		}
 	}

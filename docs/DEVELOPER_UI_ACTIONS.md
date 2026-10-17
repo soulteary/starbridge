@@ -54,8 +54,11 @@ Disabled controls are rejected; offscreen controls only permit `scroll_into_view
   `Escape`, `Space`, `Backspace`, `Delete`, `Insert`, `Home`, `End`, `PageUp`,
   `PageDown`, `Left`, `Right`, `Up`, or `Down`. Optional `modifiers` contains
   distinct `Control`, `Alt`, and/or `Shift`. It provides no freeform text or
-  Windows-key interface; prefer `set_value` for text. All key input is redacted
+  Windows-key interface; prefer `set_value` for a UIA value, or `input.text`
+  for literal Unicode input. All key input is redacted
   in previews and omitted from results.
+- `input.text` inserts required `text` into the target's currently focused
+  control, without requiring UIA ValuePattern. See the Unicode contract below.
 - `input.mouse` requires physical guest-screen `x`/`y` (`-65535..65535`).
   `event` is `click` (default), `move`, or `wheel`; clicks accept `button`
   `left` (default), `right`, or `middle`. Wheel input requires `wheel_delta`,
@@ -69,6 +72,71 @@ silently focuses another window. A held modifier or mouse button causes
 All writes require a visible, enabled window on the caller's accessible input
 desktop and current session. Locked/secure desktops, minimized windows (except
 for explicit focus), wrong identities, and inaccessible desktops are rejected.
+
+## Literal Unicode text
+
+```sh
+./bin/starbridge --dry-run dev input.text VM --request text.json --allow-write
+./bin/starbridge dev input.text VM --request text.json --allow-write
+```
+
+```json
+{
+  "hwnd": "0x123",
+  "pid": 42,
+  "start_time_utc": "2026-01-02T03:04:05.1234567Z",
+  "text": "中文 😀",
+  "timeout_ms": 10000,
+  "lock_timeout_ms": 0
+}
+```
+
+`text` contains `1..2048` valid Unicode code points, without NUL. Empty text,
+invalid UTF-8 and unpaired surrogate escapes/units are rejected; an actual
+U+FFFD replacement character is valid. The common request budget remains
+16000 UTF-8 JSON bytes. No clipboard, IME composition or keyboard-layout
+conversion is used; existing `ui.act` `set_value` remains available and is
+preferable when an application exposes a writable UIA value.
+
+The newline policy is **literal**: CR, LF, CRLF and Tab are preserved exactly.
+They are sent as Unicode characters, never converted to `VK_RETURN` or
+`VK_TAB`. Applications may ignore them or interpret control characters as
+editing, submission or other actions. In particular LF alone is not guaranteed
+to create a newline in native Windows Edit controls. Use explicit `input.key`
+`Enter`/`Tab` when the intended operation is a key press, and test the target
+application's behavior before sending a multiline value. No printable text is
+silently normalized.
+
+The worker validates the same window/session/input-desktop identity and named
+session mutex as other input actions, then checks foreground and that no
+keyboard key or mouse button is held. The currently focused control receives
+the input; a window identity does not identify that child control. Set or check
+focus explicitly before dispatch. There is no implicit focus change or UIPI
+bypass, and applications that do not process Unicode `VK_PACKET` input may
+ignore it. DPI conversion is unnecessary because this action has no coordinates.
+
+Each UTF-16 code unit becomes a `KEYEVENTF_UNICODE` down/up pair with virtual
+key zero. Supplementary characters retain their high/low surrogate order.
+At most 4096 UTF-16 units / 8192 events are inserted by one `SendInput` call.
+Success adds `code_point_count`, `utf16_unit_count`, `input_count` and
+`newline_policy:"literal"`; counts describe the original unchanged text.
+It also reports `foreground_after`, which may already have changed while the
+application processes input. These counts confirm insertion, not acceptance
+or completion by the application.
+
+Partial, denied or interrupted insertion has `outcome:"unknown"` and is never
+retried automatically. A partial batch only attempts the unmatched final
+Unicode key-up, if there is one; it does not send missing characters or finish
+a surrogate pair. Inspect application state before another write. Input text
+is redacted in CLI/MCP dry runs and omitted from results and errors, including
+raw transport/provider diagnostics; identity, timing and counts remain visible.
+Request files and process arguments still contain the text while executing,
+and subsequent UI queries or screenshots may show what the application displays.
+
+Microsoft documents the Unicode flags and foreground-message behavior in
+[KEYBDINPUT](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-keybdinput),
+and insertion counts, keyboard-state effects and integrity restrictions in
+[SendInput](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput).
 
 ## Coordination and outcomes
 
@@ -104,3 +172,9 @@ It does not operate a real window or send input. Go tests check authorization,
 request budgets, input redaction, identity and result validation. Actual UIA
 patterns, focus policy, foreground changes, DPI and input insertion require
 opt-in acceptance against a disposable test fixture.
+
+`tests/windows/developer-input-text-contract.ps1` additionally checks Chinese,
+emoji surrogate pairs, literal line endings, event/code-point bounds and
+partial-insertion cleanup through synthetic delegates. It never calls
+`SendInput`. Go tests cover raw JSON Unicode, CLI/MCP registration, independent
+write authorization, previews, result counts and private failure envelopes.

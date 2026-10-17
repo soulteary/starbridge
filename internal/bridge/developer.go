@@ -103,33 +103,43 @@ func (b *Bridge) Developer(ctx context.Context, vm, name string, params map[stri
 	}
 	payload, err := b.run(ctx, args, false, action.Mutation, true)
 	if err != nil {
+		if name == "input.text" {
+			return nil, privateDeveloperInputTextError(err)
+		}
 		return nil, err
 	}
 	if b.options.DryRun {
 		return Success(payload), nil
 	}
 	response, _ := asObject(payload) // run has validated the generic envelope.
+	invalidResponse := invalidGuestResponse
+	if name == "input.text" {
+		invalidResponse = func() error { return privateDeveloperInputTextError(invalidGuestResponse()) }
+	}
 	meta, valid := asObject(response["meta"])
 	if !valid || meta["protocol_version"] != DeveloperProtocol || meta["action"] != name || meta["read_only"] != !action.Mutation ||
 		!responseInteger(meta["session_id"], 0, 2147483647) || !boolValue(meta["user_interactive"]) {
-		return nil, invalidGuestResponse()
+		return nil, invalidResponse()
 	}
 	if response["ok"] == true {
 		sessionID, _ := integral(meta["session_id"])
 		if action.Interactive && (sessionID == 0 || meta["user_interactive"] != true) {
-			return nil, invalidGuestResponse()
+			return nil, invalidResponse()
 		}
 		data, _ := asObject(response["data"])
 		if !action.ValidateResult(data) || (action.ValidateWithinRequest != nil && !action.ValidateWithinRequest(data, params)) {
-			return nil, invalidGuestResponse()
+			return nil, invalidResponse()
 		}
 		if name == "system.info" {
 			session, _ := asObject(data["session"])
 			dataSessionID, _ := integral(session["id"])
 			if dataSessionID != sessionID || session["user_interactive"] != meta["user_interactive"] {
-				return nil, invalidGuestResponse()
+				return nil, invalidResponse()
 			}
 		}
+	}
+	if name == "input.text" {
+		return privateDeveloperInputTextResult(response), nil
 	}
 	return Result(response), nil
 }

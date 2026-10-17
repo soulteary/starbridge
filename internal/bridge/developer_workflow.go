@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/soulteary/starbridge/internal/contract"
 )
 
 type DevelopmentStep struct {
@@ -87,8 +89,8 @@ func LoadDevelopmentProfile(path string) (*DevelopmentProfile, string, error) {
 		return nil, "", NewError("INVALID_PROFILE", "Profile changed while being opened.", nil)
 	}
 	data, err := io.ReadAll(io.LimitReader(file, 65537))
-	if err != nil || len(data) > 65536 || uniqueRecyclePolicyKeys(data) != nil {
-		return nil, "", NewError("INVALID_PROFILE", "Profile must be unique-key JSON within 64 KiB.", nil)
+	if err != nil || len(data) > 65536 || !contract.ValidJSONUnicode(data) || uniqueRecyclePolicyKeys(data) != nil {
+		return nil, "", NewError("INVALID_PROFILE", "Profile must be unique-key valid Unicode JSON within 64 KiB.", nil)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
