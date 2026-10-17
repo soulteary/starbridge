@@ -20,13 +20,15 @@ $script:DeveloperScriptPath = $PSCommandPath
 $script:DevStartedAt = [DateTime]::UtcNow
 $script:DevFailureCode = 'INTERNAL_ERROR'
 $script:DevFailureMessage = 'The developer helper could not complete the request.'
+$script:DevFailureDetails = $null
 $script:DevActionName = ''
 $script:DevMutation = $false
 $script:DevActions = New-Object 'Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
 
-function Stop-Dev([string]$Code, [string]$Message) {
+function Stop-Dev([string]$Code, [string]$Message, $Details = $null) {
     $script:DevFailureCode = $Code
     $script:DevFailureMessage = $Message
+    $script:DevFailureDetails = $Details
     throw $Message
 }
 
@@ -165,7 +167,7 @@ try {
     $diagnostic = [ordered]@{ exception_type=$_.Exception.GetType().Name; parameter=$parameterName; source_file=$sourceFile; source_line=$_.InvocationInfo.ScriptLineNumber }
     Write-DevResponse ([ordered]@{
         ok=$false
-        error=[ordered]@{ code=$script:DevFailureCode; message=$script:DevFailureMessage; diagnostic=$diagnostic }
+        error=[ordered]@{ code=$script:DevFailureCode; message=$script:DevFailureMessage; details=$script:DevFailureDetails; diagnostic=$diagnostic }
         meta=(New-DevMetadata)
     })
     exit 1

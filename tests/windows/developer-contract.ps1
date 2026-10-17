@@ -74,7 +74,9 @@ Register-DeveloperAction -Name 'contract.write' -Handler { param($p); Assert-Dev
     if ($json.Contains($temporary) -or ($null -ne $info.meta.PSObject.Properties['user'])) { throw 'Environment response disclosed a private path or username field.' }
     $again = Invoke-DevContract '{"action":"system.info"}'
     if ($again.data.helper.sha256 -cne $info.data.helper.sha256) { throw 'Unchanged installed code must have a stable identity.' }
-    Add-Content -LiteralPath (Join-Path $temporary 'developer\contract.ps1') -Value '# Changed fixture code.' -Encoding UTF8
+    # A here-string does not retain its closing newline. Keep the comment on a
+    # new line so it cannot become part of the final switch argument.
+    Add-Content -LiteralPath (Join-Path $temporary 'developer\contract.ps1') -Value ([Environment]::NewLine + '# Changed fixture code.') -Encoding UTF8
     $changed = Invoke-DevContract '{"action":"system.info"}'
     if ($changed.data.helper.sha256 -ceq $info.data.helper.sha256) { throw 'Code identity did not cover installed action modules.' }
     $read = Invoke-DevContract '{"action":"contract.read","params":{}}'
