@@ -41,6 +41,12 @@ helper's internal UIA worker uses the same process-scoped setting.
 
 Valid invocations write exactly one compact JSON response to stdout as UTF-8.
 Success exits `0`; an error exits `1` and returns a bounded public error message.
+The host rejects ambiguous envelopes containing both `data` and `error`, and
+requires nonempty string `error.code` and `error.message` on failure. Successful
+`data` must be an object: process/window lists require their named array, boolean
+`truncated` and integer `limit`; UI trees require the node and warning arrays,
+snapshot identity, configured bounds and limit flags. Required item identities,
+coordinates and state fields are type-checked. Extra fields remain compatible.
 PowerShell's own startup or parameter-binding errors can occur before the script
 runs, so callers must also handle a nonzero exit with no JSON.
 

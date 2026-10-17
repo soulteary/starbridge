@@ -140,6 +140,10 @@ func TestToolCatalog(t *testing.T) {
 				if !ok || schema["type"] != "object" || schema["additionalProperties"] != false {
 					t.Fatalf("schema: %#v", tool.InputSchema)
 				}
+				output, ok := tool.OutputSchema.(map[string]any)
+				if !ok || output["type"] != "object" || output["oneOf"] == nil {
+					t.Fatalf("missing envelope output schema: %#v", tool.OutputSchema)
+				}
 			}
 		})
 	}
@@ -212,7 +216,7 @@ func TestGuestErrorAndMetadata(t *testing.T) {
 		if vm != "测试" || action != "ui.tree" || params["max_depth"] != 6 || params["max_nodes"] != 300 {
 			t.Errorf("defaults: %s %s %#v", vm, action, params)
 		}
-		return bridge.Result{"ok": true, "data": []any{}, "meta": map[string]any{"protocol_version": "1", "session_id": 1}}, nil
+		return bridge.Result{"ok": true, "data": map[string]any{"nodes": []any{}, "hwnd": "1", "snapshot_id": "snapshot", "view": "control", "max_depth": 6, "max_nodes": 300, "node_limit_reached": false, "depth_limit_reached": false, "warnings": []any{}, "coordinate_space": "guest-screen-physical-pixels"}, "meta": map[string]any{"protocol_version": "1", "action": "ui.tree", "session_id": 1, "user_interactive": true}}, nil
 	}}
 	session, ctx := connect(t, backend, false)
 	payload := envelope(t, call(t, session, ctx, "guest_ui_tree", map[string]any{"vm": "测试", "hwnd": "1"}))

@@ -115,6 +115,8 @@ Codex 等本地客户端可以调用 CLI，也可以配置 stdio MCP。构建二
 codex mcp add starbridge -- /absolute/project/bin/starbridge serve
 ```
 
+所有 MCP 工具声明统一的输出信封 schema：成功为 `ok:true` 与 `data`，失败为 `ok:false` 与非空 `error.code`、`error.message`，两者互斥。数据结构允许兼容性新增字段；guest 返回值另由宿主按具体动作验证，非法响应返回 `INVALID_GUEST_RESPONSE`。
+
 默认提供 `vm_list`、`vm_info`、`guest_processes`、`guest_windows`、`guest_ui_tree`。如需向客户端提供启动、关机、挂起和恢复工具，将启动参数改为：
 
 ```sh
