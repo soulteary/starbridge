@@ -20,9 +20,13 @@ import (
 
 var evidenceName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 
+const maxEvidenceRunBytes = 32 * 1024 * 1024
+const evidenceManifestReserve = 64 * 1024
+
 func init() {
 	registerDeveloperAction(DeveloperAction{Name: "evidence.capture", Description: "Save explicitly selected application observations, images and task output with a hashed manifest.", Mutation: true,
 		Normalize: normalizeEvidence, ValidateResult: func(data map[string]any) bool { return nonemptyText(data["run_id"]) && boolValue(data["complete"]) },
+		RedactPreview: func(p map[string]any) map[string]any { p["output_directory"] = "[redacted]"; return p },
 		Execute: func(ctx context.Context, b *Bridge, vm string, p map[string]any, _ bool) (Result, error) {
 			return b.captureEvidence(ctx, vm, p)
 		},
@@ -59,7 +63,7 @@ func normalizeEvidence(p map[string]any) (map[string]any, error) {
 			}
 		}
 		name, valid := observation["name"].(string)
-		if !valid || !evidenceName.MatchString(name) || seen[name] {
+		if !valid || !evidenceName.MatchString(name) || name == "manifest" || seen[name] {
 			return bad()
 		}
 		seen[name] = true
@@ -101,14 +105,24 @@ func saveEvidenceFile(directory, name string, content []byte) (map[string]any, e
 		err = closeErr
 	}
 	if err != nil {
+		// This file was exclusively created by this call. Do not leave a partial
+		// artifact behind if writing or closing failed.
+		_ = os.Remove(filepath.Join(directory, name))
 		return nil, err
 	}
 	hash := sha256.Sum256(content)
 	return map[string]any{"name": name, "bytes": len(content), "sha256": hex.EncodeToString(hash[:])}, nil
 }
 
-func evidencePayload(directory, name, action string, result Result) ([]any, error) {
-	files := []any{}
+type evidenceArtifact struct {
+	name    string
+	content []byte
+}
+
+// Prepare the complete on-disk representation before creating any artifacts.
+// Compact transport JSON is not a safe estimate of pretty-printed JSON size.
+func prepareEvidencePayload(name, action string, result Result) ([]evidenceArtifact, error) {
+	artifacts := []evidenceArtifact{}
 	// Work on JSON-decoded private storage, never remove data from caller maps.
 	encoded, err := json.Marshal(result)
 	if err != nil {
@@ -132,11 +146,7 @@ func evidencePayload(directory, name, action string, result Result) ([]any, erro
 		if decodeErr != nil || config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > 64000000 {
 			return nil, invalidGuestResponse()
 		}
-		file, saveErr := saveEvidenceFile(directory, name+".png", image)
-		if saveErr != nil {
-			return nil, saveErr
-		}
-		files = append(files, file)
+		artifacts = append(artifacts, evidenceArtifact{name + ".png", image})
 		delete(data, "png_base64")
 		data["image_file"] = name + ".png"
 	}
@@ -149,11 +159,7 @@ func evidencePayload(directory, name, action string, result Result) ([]any, erro
 		if decodeErr != nil || len(output) > 65536 {
 			return nil, invalidGuestResponse()
 		}
-		file, saveErr := saveEvidenceFile(directory, name+".log", output)
-		if saveErr != nil {
-			return nil, saveErr
-		}
-		files = append(files, file)
+		artifacts = append(artifacts, evidenceArtifact{name + ".log", output})
 		delete(data, "data_base64")
 		data["output_file"] = name + ".log"
 	}
@@ -161,11 +167,48 @@ func evidencePayload(directory, name, action string, result Result) ([]any, erro
 	if err != nil {
 		return nil, err
 	}
-	file, err := saveEvidenceFile(directory, name+".json", append(encoded, '\n'))
+	artifacts = append(artifacts, evidenceArtifact{name + ".json", append(encoded, '\n')})
+	for _, artifact := range artifacts {
+		if len(artifact.content) > MaxOutputBytes {
+			return nil, NewError("OUTPUT_LIMIT_EXCEEDED", "Evidence file exceeds its byte budget.", nil)
+		}
+	}
+	return artifacts, nil
+}
+
+func evidenceArtifactBytes(artifacts []evidenceArtifact) int64 {
+	var bytes int64
+	for _, artifact := range artifacts {
+		bytes += int64(len(artifact.content))
+	}
+	return bytes
+}
+
+func saveEvidenceArtifacts(directory string, artifacts []evidenceArtifact, remaining int64) ([]any, error) {
+	if evidenceArtifactBytes(artifacts) > remaining {
+		return nil, NewError("EVIDENCE_BUDGET_EXCEEDED", "The observation does not fit the remaining evidence budget.", nil)
+	}
+	files := []any{}
+	for _, artifact := range artifacts {
+		file, err := saveEvidenceFile(directory, artifact.name, artifact.content)
+		if err != nil {
+			for _, saved := range files {
+				entry, _ := asObject(saved)
+				_ = os.Remove(filepath.Join(directory, entry["name"].(string)))
+			}
+			return nil, err
+		}
+		files = append(files, file)
+	}
+	return files, nil
+}
+
+func evidencePayload(directory, name, action string, result Result) ([]any, error) {
+	artifacts, err := prepareEvidencePayload(name, action, result)
 	if err != nil {
 		return nil, err
 	}
-	return append(files, file), nil
+	return saveEvidenceArtifacts(directory, artifacts, maxEvidenceRunBytes-evidenceManifestReserve)
 }
 
 func (b *Bridge) captureEvidence(ctx context.Context, vm string, p map[string]any) (Result, error) {
@@ -185,9 +228,11 @@ func (b *Bridge) captureEvidence(ctx context.Context, vm string, p map[string]an
 	observations := []any{}
 	complete := true
 	totalBytes := int64(0)
+	stopReason := ""
 	for _, item := range p["observations"].([]any) {
 		if ctx.Err() != nil {
 			complete = false
+			stopReason = "interrupted"
 			break
 		}
 		observation, _ := asObject(item)
@@ -209,33 +254,66 @@ func (b *Bridge) captureEvidence(ctx context.Context, vm string, p map[string]an
 		if result["ok"] != true {
 			complete = false
 		}
-		estimate, encodeErr := json.Marshal(result)
-		if encodeErr != nil || totalBytes+int64(len(estimate)) > 32*1024*1024 {
-			complete = false
-			break
-		}
-		files, err := evidencePayload(directory, name, action, result)
+		artifacts, err := prepareEvidencePayload(name, action, result)
 		if err != nil {
 			complete = false
 			result = Failure(NewError("EVIDENCE_CAPTURE_FAILED", "Observation could not be saved within the evidence contract.", nil))
-			files, err = evidencePayload(directory, name, action, result)
+			artifacts, _ = prepareEvidencePayload(name, action, result)
 		}
-		if err != nil {
-			return nil, NewError("IO_ERROR", "Cannot save evidence observation.", nil)
+		remaining := int64(maxEvidenceRunBytes-evidenceManifestReserve) - totalBytes
+		exhausted := evidenceArtifactBytes(artifacts) > remaining
+		if exhausted {
+			complete = false
+			stopReason = "budget_exhausted"
+			result = Failure(NewError("EVIDENCE_BUDGET_EXCEEDED", "The observation does not fit the remaining evidence budget.", nil))
+			artifacts, _ = prepareEvidencePayload(name, action, result)
+		}
+		files := []any{}
+		errorCode := ""
+		if exhausted && evidenceArtifactBytes(artifacts) > remaining {
+			// The reserved manifest can still record the omitted observation even
+			// when no failure JSON fits. No part of its PNG/log is created.
+			errorCode = "EVIDENCE_BUDGET_EXCEEDED"
+		} else {
+			files, err = saveEvidenceArtifacts(directory, artifacts, remaining)
+			if err != nil {
+				complete = false
+				stopReason = "write_failed"
+				errorCode = "EVIDENCE_WRITE_FAILED"
+				files = []any{}
+			}
 		}
 		for _, file := range files {
 			object, _ := asObject(file)
 			totalBytes += int64(object["bytes"].(int))
 		}
-		observations = append(observations, map[string]any{"name": name, "action": action, "ok": result["ok"] == true, "started_at": started.UTC().Format(time.RFC3339Nano), "duration_ms": time.Since(started).Milliseconds(), "files": files})
-		if totalBytes > 32*1024*1024 {
-			complete = false
+		record := map[string]any{"name": name, "action": action, "ok": result["ok"] == true && errorCode == "", "started_at": started.UTC().Format(time.RFC3339Nano), "duration_ms": time.Since(started).Milliseconds(), "files": files}
+		if errorCode != "" {
+			record["error_code"] = errorCode
+		}
+		observations = append(observations, record)
+		if exhausted || errorCode != "" {
 			break
 		}
 	}
-	manifest := map[string]any{"run_id": runID, "vm": uuid, "starbridge_version": version.Version, "created_at": time.Now().UTC().Format(time.RFC3339Nano), "complete": complete, "bytes": totalBytes, "observations": observations}
-	encoded, _ := json.MarshalIndent(manifest, "", "  ")
-	if _, err := saveEvidenceFile(directory, "manifest.json", append(encoded, '\n')); err != nil {
+	manifest := map[string]any{"run_id": runID, "vm": uuid, "starbridge_version": version.Version, "created_at": time.Now().UTC().Format(time.RFC3339Nano), "complete": complete, "bytes": totalBytes,
+		"observations": observations, "requested_observations": len(p["observations"].([]any)), "stop_reason": stopReason}
+	var encoded []byte
+	// Include the manifest itself in the reported total. Only the decimal byte
+	// count can change its size; the small fixed point converges in a few passes.
+	for {
+		encoded, _ = json.MarshalIndent(manifest, "", "  ")
+		encoded = append(encoded, '\n')
+		withManifest := totalBytes + int64(len(encoded))
+		if manifest["bytes"] == withManifest {
+			break
+		}
+		manifest["bytes"] = withManifest
+	}
+	if len(encoded) > evidenceManifestReserve || totalBytes+int64(len(encoded)) > maxEvidenceRunBytes {
+		return nil, NewError("OUTPUT_LIMIT_EXCEEDED", "Evidence manifest exceeded its reserved budget.", nil)
+	}
+	if _, err := saveEvidenceFile(directory, "manifest.json", encoded); err != nil {
 		return nil, NewError("IO_ERROR", "Cannot save evidence manifest.", nil)
 	}
 	return Success(map[string]any{"run_id": runID, "complete": complete, "manifest_file": filepath.Join(directory, "manifest.json"), "observations": len(observations)}), nil
