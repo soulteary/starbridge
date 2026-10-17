@@ -55,6 +55,12 @@ jobs:
       - name: Parse opt-in desktop acceptance scripts
         shell: powershell
         run: |
+          & .\tests\windows\developer-files.ps1
+          & .\tests\windows\developer-bootstrap.ps1
+
+      - name: Parse remaining opt-in desktop scripts
+        shell: powershell
+        run: |
           Get-ChildItem tests/windows/*.ps1 | ForEach-Object {
             $tokens = $null; $errors = $null
             $null = [Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors)
