@@ -87,6 +87,10 @@ func parseAccessPolicy(data []byte) (*AccessPolicy, error) {
 			known[definition.name] = true
 		}
 	}
+	known["doctor_vm"], known["vm_snapshot_list"] = true, true
+	for _, action := range bridge.DeveloperActions() {
+		known[developerToolName(action.Name)] = true
+	}
 	policy := &AccessPolicy{grants: map[string]map[string]bool{}}
 	for identifier, raw := range vms {
 		uuid, valid := canonicalAccessUUID(identifier)
@@ -127,9 +131,10 @@ func LoadAccessPolicy(path string) (*AccessPolicy, error) {
 }
 
 type scopedBackend struct {
-	backend    Backend
-	policy     *AccessPolicy
-	allowWrite bool
+	backend         Backend
+	policy          *AccessPolicy
+	allowWrite      bool
+	allowGuestWrite bool
 }
 
 type accessVM struct {
@@ -286,22 +291,7 @@ func (b *scopedBackend) VMAction(ctx context.Context, action, vm string, force b
 // NewWithAccess adds an optional UUID/action policy without changing New's API.
 // VM write tools still require allowWrite, even if granted by the policy.
 func NewWithAccess(backend Backend, allowWrite bool, policy *AccessPolicy) *mcp.Server {
-	if policy == nil {
-		return New(backend, allowWrite)
-	}
-	server := New(&scopedBackend{backend: backend, policy: policy, allowWrite: allowWrite}, allowWrite)
-	for _, definition := range tools(allowWrite) {
-		if definition.name == "vm_list" {
-			continue
-		}
-		granted := false
-		for _, actions := range policy.grants {
-			granted = granted || actions[definition.name]
-		}
-		if !granted {
-			server.RemoveTools(definition.name)
-		}
-	}
+	server, _ := NewWithOptions(backend, ServerOptions{AllowVMWrite: allowWrite, AccessPolicy: policy})
 	return server
 }
 

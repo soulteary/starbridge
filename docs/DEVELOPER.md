@@ -12,7 +12,9 @@
 
 `parameters.json` 直接包含参数对象，例如 `{}`，不包含 `action` 或 `params` 外层。省略 `--request` 相当于 `{}`。未知动作、参数或不符合类型的值会被拒绝；写动作必须显式加 `--allow-write`，Go API 和 Windows 入口也执行此检查。预演完成参数校验但不访问 VM；注册了脱敏函数的动作会在预演中隐藏敏感参数。
 
-`system.info` 返回 Windows 版本、系统与进程架构、PowerShell/.NET 版本、会话、已安装动作以及 helper 代码指纹。默认不返回用户名或目录。`capabilities` 表示安装了对应实现；具体动作仍可能因会话、权限、应用状态或配置而不可用。代码指纹覆盖入口和 `developer/` 下所有 `.ps1` 文件，包括 workers；它不是代码签名。
+`system.info` 返回 Windows 版本、系统与进程架构、PowerShell/.NET 版本、会话、已安装动作以及 helper 代码指纹。默认不返回用户名或目录。`capabilities` 表示安装了对应实现；具体动作仍可能因会话、权限、应用状态或配置而不可用。代码指纹覆盖入口和 `developer/` 下所有 `.ps1`、`.cs` 文件，包括 workers；它不是代码签名。
+
+通过 MCP 调用时显式开启 `serve --developer-tools`；独立写授权、动作策略及宿主工作目录见[MCP 开发工具](MCP_DEVELOPER.md)。
 
 ## 请求与响应
 

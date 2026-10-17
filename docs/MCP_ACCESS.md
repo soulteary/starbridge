@@ -18,6 +18,8 @@ starbridge serve --access-policy /absolute/path/mcp-access-policy.json --allow-v
 
 `vms` 的键必须是 UUID，匹配时忽略大小写和成对花括号。可授权的工具为 `vm_info`、`guest_processes`、`guest_windows`、`guest_ui_tree`、`vm_start`、`vm_stop`、`vm_suspend`、`vm_resume`。
 
+开启 `--developer-tools` 后，还可授权 `doctor_vm`、`vm_snapshot_list` 和编译进主机的 `dev.<action>` 工具。开发写动作需独立的 `--allow-guest-write`；工作流的嵌套操作也逐项检查同一 VM 的授权，宿主文件访问另受工作目录限制，详见[开发工具的 MCP 配置](MCP_DEVELOPER.md)。
+
 - `vm_list` 始终提供，只列出策略中的 VM。空动作数组表示仅允许列出该 VM；`{"vms":{}}` 不允许访问任何 VM。
 - 其余工具仅在策略中获授权后列出，写操作还需 `--allow-vm-write`。
 - 策略在启动时加载，修改后需重启。文件上限为 64 KiB；读取失败、未知工具、无效或重复配置均以 `INVALID_ACCESS_POLICY` 拒绝启动，错误写入 stderr。
