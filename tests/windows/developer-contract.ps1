@@ -33,10 +33,12 @@ function Invoke-DevContract([string]$Json, [string]$Code = '', [bool]$Write = $f
     }
     if ([string]::IsNullOrEmpty($response.meta.timestamp) -or ($response.meta.duration_ms -lt 0)) { throw 'Invalid observation metadata.' }
     if ($Code -eq '') {
-        if (($exitCode -ne 0) -or !$response.ok -or ($null -eq $response.PSObject.Properties['data']) -or ($null -ne $response.PSObject.Properties['error'])) { throw 'Expected developer success envelope and exit 0.' }
+        if (($exitCode -ne 0) -or !$response.ok -or ($null -eq $response.PSObject.Properties['data']) -or ($null -ne $response.PSObject.Properties['error'])) {
+            throw ('Expected developer success; code={0}, type={1}, source_line={2}.' -f $response.error.code, $response.error.diagnostic.exception_type, $response.error.diagnostic.source_line)
+        }
     } else {
         if (($exitCode -ne 1) -or $response.ok -or ($response.error.code -cne $Code) -or [string]::IsNullOrEmpty($response.error.message) -or ($null -ne $response.PSObject.Properties['data'])) {
-            throw ('Expected ' + $Code + '; got: ' + [string]$output[0])
+            throw ('Expected {0}; received error code {1}.' -f $Code, $response.error.code)
         }
     }
     $script:Checks++

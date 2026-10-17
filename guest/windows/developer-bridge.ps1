@@ -157,9 +157,10 @@ try {
     Write-DevResponse ([ordered]@{ ok=$true; data=$data; meta=(New-DevMetadata) })
     exit 0
 } catch {
+    $diagnostic = [ordered]@{ exception_type=$_.Exception.GetType().Name; source_line=$_.InvocationInfo.ScriptLineNumber }
     Write-DevResponse ([ordered]@{
         ok=$false
-        error=[ordered]@{ code=$script:DevFailureCode; message=$script:DevFailureMessage }
+        error=[ordered]@{ code=$script:DevFailureCode; message=$script:DevFailureMessage; diagnostic=$diagnostic }
         meta=(New-DevMetadata)
     })
     exit 1
