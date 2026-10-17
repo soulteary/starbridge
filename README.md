@@ -1,44 +1,51 @@
 # Starbridge · 星桥
 
-让 AI 助手通过 CLI 或 MCP 管理 Parallels Desktop 虚拟机，查询、操作和截图 Windows 测试应用。
+让 AI 助手通过 CLI 或 MCP 管理 Parallels Desktop 虚拟机，并在 Windows 中查询、操作和截图测试应用。
 
-当前为 **0.1 原型**：macOS 宿主使用 Go 单二进制，Windows 内运行 PowerShell helper。
+Starbridge 在 macOS 上运行 Go 单二进制，通过 Parallels CLI 调用 Windows PowerShell helper。既可以单独执行命令，也可以把开发任务交给支持本地 stdio MCP 的客户端。
 
-## 当前能力
+## 能做什么
 
-- **管理 Parallels VM**：列表、详情、启动、关机、强制停止、挂起、恢复、克隆和快照管理。
-- **按用户策略回收**：关机保留、恢复指定快照或删除 VM；支持默认策略、按 VM 配置和命令行覆盖。
-- **读取 Windows 桌面**：进程名称与 PID，窗口标题与位置，以及 UI Automation 暴露的按钮等控件名称、标识、位置和状态。
-- **操作测试应用**：搜索控件、执行 UIA 操作、调整窗口、点击、按键和输入 Unicode 文本；按窗口截图并通过 MCP 返回图片。
-- **开发调试**：受配置约束的应用任务、文件传输、helper 安装、等待与断言、工作流和证据导出。
-- **供 AI 调用**：JSON 输出、命令预演、超时控制，以及支持 VM 与动作授权的本地 MCP 服务。
+- **虚拟机管理**：列表、详情、启动、正常关机、强制停止、挂起、恢复、克隆及快照管理；按用户策略选择关机保留、恢复快照或删除 VM。
+- **应用与控件查询**：进程名称、PID 和启动时间，窗口标题、位置，以及 UI Automation 暴露的控件名称、标识、边界、状态和支持的操作。
+- **窗口与输入操作**：UIA 语义操作、窗口聚焦和调整大小、鼠标与按键、中文和 emoji 等 Unicode 文本输入。
+- **截图与视觉操作**：按窗口使用 PrintWindow 或 Windows Graphics Capture 截图；观察界面、接收客户端选出的图片坐标、点击一次并返回新观察。MCP 可直接返回 PNG 图片。
+- **开发调试**：运行配置好的应用任务、传输和同步文件、安装 helper、等待与断言、编排工作流、导出带哈希清单的证据。
+- **可控的 AI 调用**：JSON 输出、离线预演、执行预算、VM 与动作授权，以及相互独立的 VM 写权限和 guest 写权限。
 
-`guest` 入口提供只读查询；`dev` 入口提供需要独立写授权的开发动作。控件信息与语义操作取决于应用的 UI Automation 支持，输入和截图也受 Windows 会话、权限与应用实现约束。基础验收见[验收指南](docs/ACCEPTANCE.md)，开发动作的隔离环境验收见[开发验收](docs/DEVELOPER_ACCEPTANCE.md)。
+`guest` 提供基础只读查询；`dev` 提供开发动作，其中写操作需要单独授权。UIA 信息取决于应用支持；图片候选的识别由 MCP 客户端的视觉模型或 OCR 完成，Starbridge 不内置识别模型。点击或输入成功派发后，仍需检查应用的实际结果。
 
-## 快速开始
+## 从源码开始
 
-运行需要 macOS 和支持 CLI 的 Parallels Desktop。可从 [Releases](https://github.com/soulteary/starbridge/releases) 获取已发布的 arm64/amd64 安装包，或使用满足 [go.mod](go.mod) 要求的 Go 工具链从源码构建：
+需要 macOS、支持 CLI 的 Parallels Desktop，以及满足 [go.mod](go.mod) 的 Go 工具链：
 
 ```sh
 go build -o bin/starbridge ./cmd/starbridge
+./bin/starbridge --version
 ./bin/starbridge doctor
 ./bin/starbridge vm list
 ./bin/starbridge --dry-run vm start "Windows 11"
 ```
 
-Windows 查询还需 Parallels Tools 和手动安装的 helper；窗口与控件查询需已登录的桌面。安装、回收策略与 MCP 客户端配置见[安装与使用](docs/USAGE.md)。
+Windows 功能还需要 Parallels Tools 和同版本 helper。按[安装与使用](docs/USAGE.md)安装完整脚本目录，再检查 guest 能力：
 
-开发动作使用 `dev` 入口；环境探测、模块安装与协议见[开发工具](docs/DEVELOPER.md)，点击与文本输入见[窗口操作](docs/DEVELOPER_UI_ACTIONS.md)，窗口截图见[截图接口](docs/DEVELOPER_SCREENSHOTS.md)。
+```sh
+./bin/starbridge dev system.info VM-UUID
+./bin/starbridge dev screenshot.capabilities VM-UUID
+```
 
-## 文档
+`VM-UUID` 是占位值，请使用 `vm list` 得到的目标标识。窗口查询、截图和输入需要可访问的已登录交互桌面。项目的 [Releases](https://github.com/soulteary/starbridge/releases) 用于分发配套安装包；尚无发布资产时使用源码构建。
 
-- [安装与使用](docs/USAGE.md)：环境要求、CLI、回收策略和 MCP。
-- [架构](docs/ARCHITECTURE.md)：组件、执行方式与能力边界。
-- [验收指南](docs/ACCEPTANCE.md)：自动检查、真实桌面与 VM 验收。
-- [Windows helper 协议](guest/windows/README.md)：请求、响应、坐标与会话说明。
-- [参与贡献](CONTRIBUTING.md)：本地检查与贡献范围。
-- [发布说明](docs/RELEASING.md)：构建配套安装包与发布流程。
+## 按任务阅读
+
+- [安装与使用](docs/USAGE.md)：构建、安装完整 helper、VM 管理、回收策略和 MCP 接入。
+- [开发动作入口](docs/DEVELOPER.md)：能力探测、请求格式，以及任务、文件、等待、工作流和证据接口索引。
+- [查找控件](docs/DEVELOPER_UI_QUERY.md) · [窗口操作与文本输入](docs/DEVELOPER_UI_ACTIONS.md) · [窗口截图](docs/DEVELOPER_SCREENSHOTS.md) · [视觉观察与点击](docs/DEVELOPER_VISUAL.md)。
+- [MCP 开发工具](docs/MCP_DEVELOPER.md) · [VM 与动作授权](docs/MCP_ACCESS.md) · [并发与取消](docs/MCP_CONCURRENCY.md)。
+- [架构与能力边界](docs/ARCHITECTURE.md) · [Windows 基础 helper 协议](guest/windows/README.md)。
+- [验证与验收](docs/ACCEPTANCE.md) · [桌面查询验收](docs/DESKTOP_TESTING.md) · [开发工作流验收](docs/DEVELOPER_ACCEPTANCE.md)。
+- [参与贡献](CONTRIBUTING.md) · [构建与发布](docs/RELEASING.md)。
 
 ## 许可
 
-本项目以 **GPLv3（GPL-3.0-only）** 分发，见 [LICENSE](LICENSE)。 第三方依赖及 Go 运行时的许可声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+本项目以 **GPLv3（GPL-3.0-only）** 分发，见 [LICENSE](LICENSE)。第三方依赖及 Go 运行时的许可声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

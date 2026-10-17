@@ -12,13 +12,13 @@ go build -o bin/starbridge ./cmd/starbridge
 ./tests/release/package-release-test.sh
 ```
 
-`tests/integration` 使用 `desktopintegration` build tag，默认不参与 `go test ./...`。即使指定该 tag，缺少 `STARBRIDGE_RUN_DESKTOP_ACCEPTANCE=1` 时，桌面测试也会跳过；此跳过行为可以离线验证：
+`tests/integration/developer_test.go` 使用 `desktopintegration` build tag，默认不参与 `go test ./...`；同目录的动作注册与示例 profile 检查仍默认运行。即使指定该 tag，缺少 `STARBRIDGE_RUN_DESKTOP_ACCEPTANCE=1` 时，桌面测试也会跳过；此跳过行为可以离线验证：
 
 ```sh
 go test -tags=desktopintegration ./tests/integration -run TestDeveloperDesktopWorkflow -count=1 -v
 ```
 
-该命令的 `SKIP` 只证明没有启用桌面操作。普通 Windows CI 解析合成窗体脚本，不会因此启动此窗体。现有 Windows 本地桌面验收见[桌面验收指南](DESKTOP_TESTING.md)。
+该命令的 `SKIP` 只证明没有启用桌面操作。普通 Windows CI 会运行[全部 developer 合成 contracts](ACCEPTANCE.md#自动化检查范围)，也会解析桌面夹具脚本；解析不会启动此开发夹具。任务 contract 会启动它自己的临时 exe，WGC contract 会运行真实无窗口 D3D11/WARP 资源操作，两者都不等于本节的 Parallels 桌面流程。
 
 ## 准备独立夹具环境
 
@@ -63,7 +63,9 @@ GitHub 的 [`Dedicated desktop integration`](https://github.com/soulteary/starbr
 
 工作流为测试显式设置 `STARBRIDGE_RUN_DESKTOP_ACCEPTANCE=1`。仅在已配置的隔离环境中，才使用同样的本地环境变量运行带 tag 的测试；不要将 UUID 或本机路径直接写入可提交的脚本。
 
-测试从固定 profile 启动自己的任务，从其有界 stdout 获取窗口身份，再与 `task.status` 的 PID 和进程启动时间核对。随后定位已知中文按钮，执行一次 UIA Invoke，等待计数器变为 `1`，检查该窗口截图的 PNG 编码与非空尺寸，正常关闭任务并等待退出。测试退出时尝试取消本次创建的任务；profile 的两分钟超时为任务提供额外边界。
+测试从固定 profile 启动自己的任务，从其有界 stdout 获取窗口身份，再与 `task.status` 的 PID 和进程启动时间核对。随后定位已知中文按钮，执行一次 UIA Invoke，等待计数器变为 `1`，检查该窗口默认 PrintWindow 截图的 PNG 编码与非空尺寸，正常关闭任务并等待退出。测试退出时尝试取消本次创建的任务；profile 的两分钟超时为任务提供额外边界。
+
+这个专用流程没有发送 `input.text`，没有调用 `ui.observe` / `ui.click`，也没有选择 WGC 或对截图做已知像素判断。Unicode 真实输入、视觉点击和 WGC 自建窗体验收按[桌面验收指南](DESKTOP_TESTING.md#开发动作与图像验收)分别执行；不能把本流程通过记为这些能力已经验收。
 
 测试不会自动开启、停止、恢复或删除 VM，不会重试 UI 写操作。截图只在内存中检查，工作流不上传截图、原始响应或任务日志。如果出现超时或连接中断，仍须在专用环境中检查本次任务是否已经退出。
 
@@ -71,8 +73,8 @@ GitHub 的 [`Dedicated desktop integration`](https://github.com/soulteary/starbr
 
 `internal/privacy` 检查 `tests/`、`examples/` 与 `internal/**/*_test.go` 中的 Git 暂存内容，以及工作区中已跟踪和未忽略的新测试资料。它也检查自己的源码，并用临时合成仓库验证：工作区已清除的敏感模式仍留在 index 时，检查会失败。
 
-检查拒绝个人主目录路径、常见密钥/token 和非示例邮箱模式；发现内容时只报告仓库内文件名，隐藏命中的值。它是针对这些模式的回归检查，不替代对测试资料和截图内容的人工审阅。只使用合成账号、`example.test` 等示例域名和运行时生成的标识；不要把真实 VM UUID、访问凭据、个人目录或桌面响应写进 fixture。
+检查拒绝个人主目录路径、常见密钥/token 和非示例邮箱模式；发现内容时只报告仓库内文件名，隐藏命中的值。它是针对这些模式的回归检查，不扫描任意文档、截图或所有凭据形式，也不替代人工审阅。只使用合成账号、`example.test` 等示例域名和运行时生成的标识；不要把真实 VM UUID、访问凭据、个人目录或桌面响应写进 fixture。
 
-集成测试失败信息仅包含动作名、稳定错误代码或断言描述，不回显原始 guest 响应、stdout/stderr、UUID、环境值或运行时路径。需要调查时，在隔离环境中单独查看具体证据，公开记录前先检查内容。
+专用集成测试失败信息仅包含动作名、稳定错误代码或断言描述，不回显原始 guest 响应、stdout/stderr、UUID、环境值或运行时路径。这不是对所有手工命令和基础 smoke 失败日志的脱敏保证；需要调查时，在隔离环境中单独查看具体证据，公开记录前先检查内容。
 
 验收结果记录提交或发布版本、Parallels/Tools 与 Windows 版本、架构、交互会话条件、执行场景和实际通过/失败结果。没有执行过的场景保留为待验收；默认 CI 的成功或 opt-in 测试的跳过不能替代真实桌面执行结果。通用 VM 验收步骤见[验证与验收](ACCEPTANCE.md)。
