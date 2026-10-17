@@ -103,3 +103,34 @@ func TestDevelopmentReferencesRejectForwardAndMixedObjects(t *testing.T) {
 		}
 	}
 }
+
+func TestDevelopmentWorkflowCancellationCannotReportCompleted(t *testing.T) {
+	for _, cleanupOnly := range []bool{false, true} {
+		t.Run(map[bool]string{false: "after-final-stage", true: "cleanup-only"}[cleanupOnly], func(t *testing.T) {
+			profile := DevelopmentProfile{Version: 1, VM: syntheticWorkflowVM, Steps: []DevelopmentStep{{Name: "start", Action: "vm.start"}}, Cleanup: &DevelopmentStep{Action: "vm.recycle", Params: map[string]any{"mode": "stop"}}}
+			f := newFixture(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			calls := 0
+			f.bridge.runner = func(context.Context, string, []string) (commandResult, error) {
+				calls++
+				cancel()
+				return commandResult{stdout: "Synthetic completed command"}, nil
+			}
+			if cleanupOnly {
+				cancel()
+			}
+			p := map[string]any{"profile_file": developmentProfileFixture(t, profile), "output_directory": t.TempDir()}
+			_, err := f.bridge.runDevelopmentProfile(ctx, syntheticWorkflowVM, p, cleanupOnly, true)
+			failure := checkCode(t, err, "WORKFLOW_FAILED")
+			if failure.Details["cleanup"] != "pending" || calls != map[bool]int{false: 1, true: 0}[cleanupOnly] {
+				t.Fatal("cancelled workflow ran cleanup or lost pending status")
+			}
+			encoded, readErr := os.ReadFile(failure.Details["report_file"].(string))
+			var report map[string]any
+			if readErr != nil || json.Unmarshal(encoded, &report) != nil || report["status"] != "failed" {
+				t.Fatal("cancelled workflow reported completion")
+			}
+		})
+	}
+}

@@ -187,6 +187,9 @@ func (b *Bridge) runDevelopmentProfile(ctx context.Context, vm string, p map[str
 	if err != nil {
 		return nil, err
 	}
+	if cleanupOnly && profile.Cleanup == nil {
+		return nil, NewError("INVALID_PROFILE", "This profile has no cleanup operation.", nil)
+	}
 	expected, valid := canonicalRecycleUUID(vm)
 	configured, _ := canonicalRecycleUUID(profile.VM)
 	if !valid || configured != expected {
@@ -260,6 +263,13 @@ func (b *Bridge) runDevelopmentProfile(ctx context.Context, vm string, p map[str
 			failed = NewError("WORKFLOW_STAGE_FAILED", "A project stage failed.", nil)
 			failedStage = step.Name
 			break
+		}
+	}
+	if ctx.Err() != nil && failed == nil {
+		failed = NewError("INTERRUPTED", "Workflow interrupted before completion; inspect pending cleanup.", nil)
+		failedStage = "completion"
+		if cleanupOnly {
+			failedStage = "cleanup"
 		}
 	}
 	cleanup := "not_configured"
