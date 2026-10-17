@@ -48,6 +48,20 @@ foreach ($case in $fixtures.defaults) {
     $checks++
 }
 
+# Public host inputs can contain more leading zeroes than the helper accepts.
+# The shared canonical values are the actual short hexadecimal transport values.
+foreach ($case in $fixtures.hwnd_cases) {
+    if (!$case.valid) { continue }
+    $actual = Get-UiOptions ([PSCustomObject]@{ hwnd=$case.canonical })
+    if (($actual.hwnd -cne $case.canonical) -or ($actual.hwnd -cnotmatch '^0x[0-9a-f]{1,16}$')) {
+        throw ('Wrong canonical HWND transport: ' + $case.name)
+    }
+    if ([Convert]::ToInt64($actual.hwnd.Substring(2), 16) -le 0) {
+        throw ('Canonical HWND is outside the positive 63-bit range: ' + $case.name)
+    }
+    $checks++
+}
+
 $strictUtf8 = New-Object Text.UTF8Encoding($false, $true)
 foreach ($case in $fixtures.text_cases) {
     $text = $case.unit * [int]$case.repeat
@@ -58,4 +72,4 @@ foreach ($case in $fixtures.text_cases) {
     $null = $strictUtf8.GetBytes($limited) # Fails if truncation splits a surrogate pair.
     $checks++
 }
-Write-Host ('Parameter contract passed ({0} cases; canonical transport integers and Unicode code points).' -f $checks)
+Write-Host ('Parameter contract passed ({0} cases; canonical transport integers/HWNDs and Unicode code points).' -f $checks)

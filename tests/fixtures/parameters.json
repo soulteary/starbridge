@@ -2,7 +2,7 @@
   "defaults": [
     {"action":"processes.list","input":{},"canonical":{"limit":500,"include_path":false}},
     {"action":"windows.list","input":{},"canonical":{"limit":500,"include_hidden":false}},
-    {"action":"ui.tree","input":{"hwnd":"1"},"canonical":{"hwnd":"1","max_depth":6,"max_nodes":300,"timeout_ms":10000}}
+    {"action":"ui.tree","input":{"hwnd":"1"},"canonical":{"hwnd":"0x1","max_depth":6,"max_nodes":300,"timeout_ms":10000}}
   ],
   "public_integer_cases": [
     {"name":"integer","input":"12","valid":true,"canonical":12},
@@ -29,6 +29,34 @@
     {"name":"exponent is not canonical","input":"1.2e1","valid":false},
     {"name":"string","input":"\"12\"","valid":false},
     {"name":"boolean","input":"true","valid":false}
+  ],
+  "hwnd_cases": [
+    {"name":"minimum decimal","input":"1","valid":true,"canonical":"0x1"},
+    {"name":"minimum hex","input":"0x1","valid":true,"canonical":"0x1"},
+    {"name":"decimal padding beyond helper width","input":"000000000000000000001","valid":true,"canonical":"0x1"},
+    {"name":"hex padding beyond helper width","input":"0x000000000000000000001","valid":true,"canonical":"0x1"},
+    {"name":"uppercase prefix and digits","input":"0X00AbCd","valid":true,"canonical":"0xabcd"},
+    {"name":"maximum decimal","input":"9223372036854775807","valid":true,"canonical":"0x7fffffffffffffff"},
+    {"name":"maximum padded decimal","input":"0009223372036854775807","valid":true,"canonical":"0x7fffffffffffffff"},
+    {"name":"maximum hex","input":"0x7fffffffffffffff","valid":true,"canonical":"0x7fffffffffffffff"},
+    {"name":"maximum padded hex","input":"0X000000007FFFFFFFFFFFFFFF","valid":true,"canonical":"0x7fffffffffffffff"},
+    {"name":"zero decimal","input":"0","valid":false},
+    {"name":"zero padded hex","input":"0x00000000000000000000","valid":false},
+    {"name":"above maximum decimal","input":"9223372036854775808","valid":false},
+    {"name":"above maximum padded decimal","input":"0009223372036854775808","valid":false},
+    {"name":"above maximum hex","input":"0x8000000000000000","valid":false},
+    {"name":"hex overflow","input":"0x10000000000000000","valid":false},
+    {"name":"negative","input":"-1","valid":false},
+    {"name":"plus sign","input":"+12","valid":false},
+    {"name":"underscore","input":"1_0","valid":false},
+    {"name":"full width digits","input":"１２","valid":false},
+    {"name":"leading whitespace","input":" 1","valid":false},
+    {"name":"trailing newline","input":"1\n","valid":false},
+    {"name":"missing hex digits","input":"0x","valid":false},
+    {"name":"empty","input":"","valid":false},
+    {"name":"numeric JSON","input":1,"valid":false},
+    {"name":"boolean JSON","input":true,"valid":false},
+    {"name":"null JSON","input":null,"valid":false}
   ],
   "text_cases": [
     {"name":"ascii boundary","unit":"a","repeat":256,"valid":true},

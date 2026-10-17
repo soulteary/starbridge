@@ -71,6 +71,8 @@ Copy-Item .\guest\windows\desktop-bridge.ps1 C:\ProgramData\Starbridge\desktop-b
 
 列表默认上限统一为 500，控件树默认深度 6、节点 300、worker 超时 10000 毫秒。MCP 与 bridge 的 JSON 参数按精确数值接受 `12.0`、`1.2e1` 等整数写法，拒绝非整数与越界值，发送给 helper 前统一为普通整数。名称长度按 Unicode 码点计数；emoji 等补充平面字符计为一个字符。
 
+HWND 接受 ASCII 十进制字符串或带 `0x` / `0X` 前缀的十六进制字符串，数值范围为 `1`–`0x7fffffffffffffff`。输入可带前导零；宿主发送给 helper 前会统一为无前导零的小写十六进制字符串，例如 `000000000000000000001` 转为 `0x1`。
+
 先查询进程和窗口，再使用新取得的 HWND 读取控件树。HWND、PID 和 UIA RuntimeId 都可能失效或被复用，不能当作永久标识。
 
 成功结果包含 `ok:true` 与 `data`；失败结果包含 `ok:false` 与 `error`，退出码为 `1`。guest 响应通过 `meta` 标明协议、会话、采样时间及坐标系。`--help` 与 `--version` 使用普通文本。
