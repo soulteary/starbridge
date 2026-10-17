@@ -81,6 +81,49 @@ $item=Get-DevUiItem $element $info 'n000001' $null 0
 if ($null -ne $item.value -or $item.value_status -cne 'password_skipped' -or $script:UiQueryFixtureValueReads -ne 1 -or $null -ne $item.state.value_read_only) { throw 'Password contents or state were read.' }
 $checks+=3
 
+# A text-only provider counts GetText length in UTF-16 units. Its synthetic
+# strings exercise the public code-point cap without touching an actual UI.
+$info.IsPassword=$false
+$range=[PSCustomObject]@{Text='';LastMaxLength=0}
+$range | Add-Member ScriptMethod GetText {
+    param([int]$MaxLength)
+    $this.LastMaxLength=$MaxLength
+    return $this.Text.Substring(0,[Math]::Min($this.Text.Length,$MaxLength))
+}
+$script:UiQueryFixtureTextPattern=[PSCustomObject]@{DocumentRange=$range}
+$textElement=[PSCustomObject]@{Current=$info}
+$textElement | Add-Member ScriptMethod GetRuntimeId { return ,@(1,3) }
+$textElement | Add-Member ScriptMethod GetSupportedPatterns { return ,@([PSCustomObject]@{ProgrammaticName='TextPatternIdentifiers.Pattern'}) }
+$textElement | Add-Member ScriptMethod TryGetCurrentPattern {
+    param($pattern,$output)
+    if ($pattern.Id -eq [System.Windows.Automation.TextPattern]::Pattern.Id) { $output.Value=$script:UiQueryFixtureTextPattern;return $true }
+    return $false
+}
+$emoji=[char]::ConvertFromUtf32(0x1F600)
+$replacement=[string][char]0xFFFD
+$strictUtf8=New-Object Text.UTF8Encoding($false,$true)
+foreach ($case in @(
+    @{text=($emoji*2048);expected=($emoji*2048);truncated=$false},
+    @{text=($emoji*2049);expected=($emoji*2048);truncated=$true},
+    @{text=(('x'*2047)+$emoji+'z');expected=(('x'*2047)+$emoji);truncated=$true},
+    @{text=('x'*2048);expected=('x'*2048);truncated=$false},
+    @{text=('fixture'+[char]0xD83D);expected=('fixture'+$replacement);truncated=$false},
+    @{text=([string][char]0xDE00+'fixture');expected=($replacement+'fixture');truncated=$false}
+)) {
+    $range.Text=$case.text;$range.LastMaxLength=0
+    $item=Get-DevUiItem $textElement $info 'n000001' $null 0
+    if ($range.LastMaxLength -ne 4098 -or $item.value_status -cne 'available' -or $item.value -cne $case.expected -or $item.value_truncated -ne $case.truncated -or (Get-DevUiCodePointLength $item.value) -gt 2048) {
+        throw 'TextPattern code-point budget or truncation flag is incorrect.'
+    }
+    $null=$strictUtf8.GetByteCount($item.value) # Reject any unpaired surrogate.
+    $checks++
+}
+$range.LastMaxLength=0;$info.IsPassword=$true
+$item=Get-DevUiItem $textElement $info 'n000001' $null 0
+if ($range.LastMaxLength -ne 0 -or $item.value_status -cne 'password_skipped' -or $null -ne $item.value) { throw 'Password TextPattern was read.' }
+$info.IsPassword=$false
+$checks++
+
 # Exercise the production traversal against an in-memory tree. Pattern reading
 # above is tested separately, so this replacement only serializes match identity.
 function Get-DevUiItem($Element,$Info,[string]$NodeId,$ParentId,[int]$Depth) {
@@ -122,12 +165,12 @@ $ast=[Management.Automation.Language.Parser]::ParseFile($modulePath,[ref]$tokens
 foreach ($definition in $ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst]},$true)) {
     if ($definition.Name -ceq 'Invoke-DevUiWorker') { . ([scriptblock]::Create($definition.Extent.Text)) }
 }
-function Stop-Dev([string]$Code,[string]$Message) { $script:UiQueryWorkerError=$Code; throw $Message }
+function Stop-Dev([string]$Code,[string]$Message,$Details=$null) { $script:UiQueryWorkerError=$Code;$script:UiQueryWorkerDetails=$Details;throw $Message }
 $temporary=Join-Path ([IO.Path]::GetTempPath()) ('starbridge-query-contract-' + [Guid]::NewGuid().ToString('N'))
 try {
     $workers=Join-Path $temporary 'developer\workers'
     $null=New-Item -ItemType Directory -Path $workers -Force
-    [IO.File]::WriteAllText((Join-Path $workers 'fixture-sleep.ps1'),'param([string]$RequestBase64) Start-Sleep -Seconds 20',(New-Object Text.UTF8Encoding($false)))
+    [IO.File]::WriteAllText((Join-Path $workers 'fixture-sleep.ps1'),'param([string]$RequestBase64,[switch]$AllowWrite) Start-Sleep -Seconds 20',(New-Object Text.UTF8Encoding($false)))
     $script:DeveloperRoot=$temporary;$script:UiQueryWorkerError=''
     $timer=[Diagnostics.Stopwatch]::StartNew()
     try { $null=Invoke-DevUiWorker 'fixture-sleep.ps1' ([PSCustomObject]@{}) 1000;throw 'A sleeping worker did not time out.' }
@@ -135,5 +178,79 @@ try {
     $timer.Stop()
     if ($timer.Elapsed.TotalSeconds -gt 8) { throw 'Worker timeout was not bounded.' }
     $checks++
+    try { $null=Invoke-DevUiWorker 'fixture-sleep.ps1' ([PSCustomObject]@{}) 1000 $true;throw 'A synthetic mutation worker did not time out.' }
+    catch { if ($script:UiQueryWorkerError -cne 'ACTION_TIMEOUT' -or $script:UiQueryWorkerDetails.outcome -cne 'unknown') { throw } }
+    $checks++
+    $errorWorker=@'
+param([string]$RequestBase64,[switch]$AllowWrite)
+$p=ConvertFrom-Json -InputObject ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($RequestBase64)))
+$result=@{ok=$false;error=@{code='FIXTURE_FAILURE';message='Synthetic worker error.';details=@{outcome=$p.outcome;sensitive='synthetic-input-must-not-be-forwarded'}}}
+[Console]::Out.WriteLine((ConvertTo-Json -InputObject $result -Depth 8 -Compress))
+exit 1
+'@
+    [IO.File]::WriteAllText((Join-Path $workers 'fixture-error.ps1'),$errorWorker,(New-Object Text.UTF8Encoding($false)))
+    foreach ($case in @(
+        @{outcome='not_started';expected='not_started'},@{outcome='unknown';expected='unknown'},
+        @{outcome='synthetic-input-must-not-be-forwarded';expected='unknown'},@{outcome=$null;expected='unknown'}
+    )) {
+        try { $null=Invoke-DevUiWorker 'fixture-error.ps1' ([PSCustomObject]@{outcome=$case.outcome}) 5000 $true;throw 'Synthetic worker failure was accepted.' }
+        catch { if ($script:UiQueryWorkerError -cne 'FIXTURE_FAILURE') { throw } }
+        if ($script:UiQueryWorkerDetails.Count -ne 1 -or $script:UiQueryWorkerDetails.outcome -cne $case.expected -or (ConvertTo-Json $script:UiQueryWorkerDetails).Contains('synthetic-input-must-not-be-forwarded')) {
+            throw 'Worker outcome was lost or raw worker details were forwarded.'
+        }
+        $checks++
+    }
+    try { $null=Invoke-DevUiWorker 'fixture-error.ps1' ([PSCustomObject]@{outcome='unknown'}) 5000;throw 'Synthetic read worker failure was accepted.' }
+    catch { if ($script:UiQueryWorkerError -cne 'FIXTURE_FAILURE' -or $null -ne $script:UiQueryWorkerDetails) { throw } }
+    $checks++
+    [IO.File]::WriteAllText((Join-Path $workers 'fixture-invalid.ps1'),'param([string]$RequestBase64,[switch]$AllowWrite) [Console]::Out.WriteLine(''invalid synthetic output'')',(New-Object Text.UTF8Encoding($false)))
+    try { $null=Invoke-DevUiWorker 'fixture-invalid.ps1' ([PSCustomObject]@{}) 5000 $true;throw 'Malformed worker response was accepted.' }
+    catch { if ($script:UiQueryWorkerError -cne 'UIA_WORKER_FAILED' -or $script:UiQueryWorkerDetails.outcome -cne 'unknown') { throw } }
+    $checks++
+    try { $null=Invoke-DevUiWorker 'fixture-missing.ps1' ([PSCustomObject]@{}) 5000 $true;throw 'Missing worker was accepted.' }
+    catch { if ($script:UiQueryWorkerError -cne 'UIA_WORKER_UNAVAILABLE' -or $script:UiQueryWorkerDetails.outcome -cne 'not_started') { throw } }
+    $checks++
+
+    # Run the real public entry against a synthetic noninteractive action. It
+    # invokes the same worker launcher and actual Stop-Dev/JSON envelope code.
+    $entry=Join-Path $temporary 'developer-bridge.ps1'
+    Copy-Item -LiteralPath (Join-Path $rootPath 'guest\windows\developer-bridge.ps1') -Destination $entry
+    Copy-Item -LiteralPath $modulePath -Destination (Join-Path $temporary 'developer\ui-query.ps1')
+    $fixtureModule=@'
+Register-DeveloperAction -Name 'contract.uiworker' -Mutation:$true -Handler {
+    param($p)
+    Invoke-DevUiWorker 'fixture-error.ps1' $p 5000 $true
+}
+'@
+    [IO.File]::WriteAllText((Join-Path $temporary 'developer\fixture.ps1'),($fixtureModule+[Environment]::NewLine),(New-Object Text.UTF8Encoding($false)))
+    foreach ($expected in @('not_started','unknown')) {
+        $request=ConvertTo-Json -InputObject @{action='contract.uiworker';params=@{outcome=$expected}} -Depth 5 -Compress
+        $request64=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($request))
+        $command="& '"+$entry.Replace("'","''")+"' -RequestBase64 '"+$request64+"' -AllowWrite"
+        $start=New-Object Diagnostics.ProcessStartInfo
+        $start.FileName=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        $start.Arguments='-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand '+[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+        $start.UseShellExecute=$false;$start.CreateNoWindow=$true
+        $start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+        $start.StandardOutputEncoding=New-Object Text.UTF8Encoding($false)
+        $start.StandardErrorEncoding=New-Object Text.UTF8Encoding($false)
+        $child=New-Object Diagnostics.Process;$child.StartInfo=$start
+        try {
+            if(!$child.Start()){throw 'Synthetic public entry did not start.'}
+            $stdout=$child.StandardOutput.ReadToEndAsync();$stderr=$child.StandardError.ReadToEndAsync()
+            if(!$child.WaitForExit(12000)){
+                try{$child.Kill();$null=$child.WaitForExit(2000)}catch{}
+                throw 'Synthetic public entry exceeded its deadline.'
+            }
+            $output=$stdout.GetAwaiter().GetResult();$errorOutput=$stderr.GetAwaiter().GetResult()
+            $response=ConvertFrom-Json -InputObject $output
+            if($child.ExitCode -ne 1 -or $errorOutput.Length -ne 0 -or $response.ok -ne $false -or $response.error.code -cne 'FIXTURE_FAILURE' -or
+                $response.error.details.outcome -cne $expected -or @($response.error.details.PSObject.Properties).Count -ne 1 -or
+                $response.meta.action -cne 'contract.uiworker' -or $response.meta.read_only -ne $false -or $output.Contains('synthetic-input-must-not-be-forwarded')) {
+                throw 'The public mutation failure envelope lost its outcome or exposed raw worker details.'
+            }
+        } finally { $child.Dispose() }
+        $checks++
+    }
 } finally { if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Recurse -Force } }
 Write-Host ('Developer UI query contract passed ({0} synthetic checks).' -f $checks)

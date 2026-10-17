@@ -205,6 +205,46 @@ func TestDevelopmentCallsOptionalMethodsAndExtendedGuestParams(t *testing.T) {
 	}
 }
 
+func TestDeveloperHostFileCatalogRequiresWorkspace(t *testing.T) {
+	hostTools := []string{"files.upload", "files.download", "files.sync", "bootstrap.install", "evidence.capture", "workflow.run", "workflow.cleanup"}
+	for _, configured := range []bool{false, true} {
+		root := ""
+		if configured {
+			root = t.TempDir()
+		}
+		f := &developerFixture{}
+		// Use the production registry: all merged modules must respect the flag.
+		session, ctx := connectDeveloper(t, f, ServerOptions{DeveloperTools: true, AllowGuestWrite: true, DeveloperWorkspace: root})
+		catalog, err := session.ListTools(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		names := map[string]bool{}
+		for _, tool := range catalog.Tools {
+			names[tool.Name] = true
+		}
+		for _, action := range hostTools {
+			name := developerToolName(action)
+			if names[name] != configured {
+				t.Fatalf("%s advertised=%t, workspace configured=%t", name, names[name], configured)
+			}
+			if !configured {
+				if _, err := session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: devArgs(accessUUIDA, map[string]any{})}); err == nil {
+					t.Fatalf("unadvertised tool %s was callable", name)
+				}
+			}
+		}
+		for _, action := range []string{"system.info", "task.start", "ui.query", "wait.until", "assert.matches", "bootstrap.rollback"} {
+			if !names[developerToolName(action)] {
+				t.Fatalf("guest-only action %s missing with workspace configured=%t", action, configured)
+			}
+		}
+		if f.calls != 0 || f.inventories != 0 {
+			t.Fatal("catalog or hidden tool request invoked backend")
+		}
+	}
+}
+
 func TestDeveloperNormalizeAndInputValidationBeforeBackend(t *testing.T) {
 	f := &developerFixture{}
 	session, ctx := connectDeveloper(t, f, devOptions(""))
@@ -246,12 +286,6 @@ func TestWorkspacePathsRejectBeforeBackend(t *testing.T) {
 		if f.calls != 0 || f.inventories != 0 {
 			t.Fatal("rejected path invoked backend")
 		}
-	}
-	f := &developerFixture{}
-	session, ctx := connectDeveloper(t, f, devOptions(""))
-	requireCode(t, envelope(t, call(t, session, ctx, "dev.files.upload", devArgs(accessUUIDA, map[string]any{"local_path": source}))), "WORKSPACE_ACCESS_DENIED")
-	if f.calls != 0 {
-		t.Fatal("missing workspace invoked backend")
 	}
 }
 

@@ -111,6 +111,9 @@ func NewWithOptions(backend Backend, options ServerOptions) (*mcp.Server, error)
 				if action.Execute != nil && !supportedLocalAction(action.Name) {
 					continue
 				}
+				if workspace.root == "" && hostFileAction(action.Name) {
+					continue
+				}
 				definition := action
 				description := action.Description
 				if action.Interactive {

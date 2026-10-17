@@ -61,8 +61,12 @@ func normalizeWait(p map[string]any) (map[string]any, error) {
 			return nil, waitInvalid("params must be an object.")
 		}
 	}
-	if action == "vm.info" && len(params) != 0 {
-		return nil, waitInvalid("vm.info takes no observation params.")
+	// Validate the selected observation before previewing or starting any work.
+	// The execution path uses these same normalizers, so a preview cannot accept
+	// parameters which the first real observation would immediately reject.
+	params, err := normalizeWaitObservation(action, params)
+	if err != nil {
+		return nil, err
 	}
 	predicate, ok := asObject(p["predicate"])
 	if !ok || predicate == nil {
@@ -117,6 +121,24 @@ func normalizeWait(p map[string]any) (map[string]any, error) {
 		result[key] = n
 	}
 	return result, nil
+}
+
+func normalizeWaitObservation(action string, params map[string]any) (map[string]any, error) {
+	switch action {
+	case "vm.info":
+		if len(params) != 0 {
+			return nil, waitInvalid("vm.info takes no observation params.")
+		}
+		return map[string]any{}, nil
+	case "processes.list", "windows.list", "ui.tree":
+		return normalizeGuestParameters(action, params)
+	default:
+		spec, registered := developerRegistry[action]
+		if !registered || spec.Mutation {
+			return nil, waitInvalid("Wait requires an installed read-only observation action.")
+		}
+		return spec.Normalize(params)
+	}
 }
 
 func waitValue(root any, path string) (any, bool) {

@@ -115,7 +115,70 @@ public class SyntheticTask {
   $budget=60000;if($name -ceq 'timeout'){$budget=1500}
   $profiles[$name]=[ordered]@{executable=$fixture;cwd=$root;args=@($mode,$root);allowed_env=@('STARBRIDGE_TEST_LABEL');allow_extra_args=($name -ceq 'echo');timeout_ms=$budget;max_output_bytes=1024;interactive=($name -ceq 'gui');show_window=($name -ceq 'gui')}
  }
+ # Individually valid configured arguments can still exceed the native limit.
+ # Keep this profile in the guest config so transport request limits do not
+ # hide the complete executable + fixed + extra argument budget.
+ $longFixed=New-Object 'Collections.Generic.List[string]'
+ for($index=0;$index -lt 15;$index++){$longFixed.Add(('x'*2048))}
+ $longFixed.Add(('y'*1500))
+ $profiles['command-limit']=[ordered]@{executable=$fixture;cwd=$root;args=@($longFixed.ToArray());allow_extra_args=$true;timeout_ms=60000;max_output_bytes=1024}
  [IO.File]::WriteAllText((Join-Path $root 'profiles.json'),(ConvertTo-Json -InputObject @{version=1;profiles=$profiles} -Depth 12),(New-Object Text.UTF8Encoding($false)))
+ $phase='quoted command length'
+ $nativePath=Join-Path (Split-Path -Parent $helper) 'developer\workers\task-native.cs'
+ Add-Type -Path $nativePath -ErrorAction Stop
+ $quotedExecutable='C:\synthetic space\fixture.exe'
+ $quotedParts=[string[]]@('fixed value','quote"value','C:\end\','',([char]::ConvertFromUtf32(0x1F600)))
+ $baseCommand=[Starbridge.Developer.TaskProcess]::BuildCommandLine($quotedExecutable,$quotedParts)
+ $padding=32766-$baseCommand.Length-3
+ $boundaryParts=[string[]](@($quotedParts)+@(('x'*$padding)))
+ $boundary=[Starbridge.Developer.TaskProcess]::BuildCommandLine($quotedExecutable,$boundaryParts)
+ Assert-TaskTest ($boundary.Length -eq 32766) 'Command boundary omitted UTF16 or quoting.'
+ Assert-TaskTest ($boundary.ToString().StartsWith('"C:\synthetic space\fixture.exe" ')) 'Executable quoting changed.'
+ Assert-TaskTest ($boundary.ToString().Contains('"quote\"value"') -and $boundary.ToString().Contains('"C:\end\\"') -and $boundary.ToString().Contains(' "" ')) 'Quoted argument expansion changed.'
+ foreach($suffix in @('x',([char]::ConvertFromUtf32(0x1F600)))){
+  $overParts=[string[]](@($quotedParts)+@(('x'*$padding)+$suffix));$rejected=$false
+  try{$null=[Starbridge.Developer.TaskProcess]::BuildCommandLine($quotedExecutable,$overParts)}catch{$rejected=$true}
+  Assert-TaskTest $rejected 'Native command length overflow was accepted.'
+ }
+ $tasksPath=Join-Path $root 'tasks'
+ $beforeTasks=@(Get-ChildItem -LiteralPath $tasksPath -Directory -ErrorAction SilentlyContinue)
+ $tooLong=Invoke-TaskTest 'task.start' @{profile='command-limit';args=@(('z'*2048))} -Write
+ Assert-TaskTest (!$tooLong.ok -and $tooLong.error.code -ceq 'TASK_COMMAND_LINE_TOO_LONG') 'Complete task command length was not checked.'
+ $afterTasks=@(Get-ChildItem -LiteralPath $tasksPath -Directory -ErrorAction SilentlyContinue)
+ Assert-TaskTest ($beforeTasks.Count -eq $afterTasks.Count) 'Rejected command created task state.'
+ $phase='startup request cleanup'
+ # Fault only this isolated copy of the trusted helper: request.json is written
+ # normally, then receipt creation fails while the real worker is suspended.
+ $copyRoot=Join-Path $root 'helper-copy';$null=New-Item -ItemType Directory -Path $copyRoot
+ Copy-Item -LiteralPath $helper -Destination (Join-Path $copyRoot 'developer-bridge.ps1')
+ Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $helper) 'developer') -Destination (Join-Path $copyRoot 'developer') -Recurse
+ $failureModule=@'
+$script:SyntheticTaskWriter=(Get-Command Write-TaskJson).ScriptBlock
+function Write-TaskJson([string]$Path,$Value) {
+    if([IO.Path]::GetFileName($Path) -ceq 'receipt.json') {
+        $requestPath=Join-Path (Split-Path -Parent $Path) 'request.json'
+        if([IO.File]::Exists($requestPath)) {
+            [IO.File]::WriteAllText((Join-Path $script:DeveloperRoot 'request-observed.txt'),'observed')
+        }
+        throw 'Synthetic receipt write failure.'
+    }
+    & $script:SyntheticTaskWriter $Path $Value
+}
+'@
+ [IO.File]::WriteAllText((Join-Path $copyRoot 'developer\zz-startup-failure.ps1'),($failureModule+[Environment]::NewLine),(New-Object Text.UTF8Encoding($false)))
+ $originalHelper=$helper
+ try{
+  $helper=Join-Path $copyRoot 'developer-bridge.ps1'
+  $failed=Invoke-TaskTest 'task.start' @{profile='echo';args=@('synthetic-sensitive-argument');env=@{STARBRIDGE_TEST_LABEL='synthetic-sensitive-environment'}} -Write
+ }finally{$helper=$originalHelper}
+ Assert-TaskTest (!$failed.ok -and $failed.error.code -ceq 'TASK_START_FAILED') 'Synthetic receipt failure was not returned.'
+ Assert-TaskTest ([IO.File]::Exists((Join-Path $copyRoot 'request-observed.txt'))) 'Startup fixture did not write its request.'
+ $previousTaskNames=@($afterTasks | ForEach-Object {$_.Name})
+ $failedDirectories=@(Get-ChildItem -LiteralPath $tasksPath -Directory | Where-Object {$_.Name -notin $previousTaskNames})
+ Assert-TaskTest ($failedDirectories.Count -eq 1) 'Startup fixture did not isolate one task.'
+ Assert-TaskTest (![IO.File]::Exists((Join-Path $failedDirectories[0].FullName 'request.json')) -and ![IO.File]::Exists((Join-Path $failedDirectories[0].FullName 'receipt.json'))) 'Failed startup retained an unowned request.'
+ $failedText=ConvertTo-Json -InputObject $failed -Depth 12 -Compress
+ Assert-TaskTest (!$failedText.Contains('synthetic-sensitive-argument') -and !$failedText.Contains('synthetic-sensitive-environment')) 'Startup failure disclosed request values.'
  $phase='synchronous worker bootstrap'
  # Probe the real private worker while this test retains its pipes. This fixture
  # distinguishes a script/bootstrap failure from detached transport lifetime.
@@ -207,7 +270,7 @@ public class SyntheticTask {
   $response=Invoke-TaskTest 'task.close' @{task_id=$id} -Write
   Assert-TaskTest (!$response.ok -and $response.error.code -ceq 'INTERACTIVE_SESSION_REQUIRED') 'Noninteractive close was not explicit.'
  }
- Write-Host 'PASS: configured task authorization, argv/env, bounded chunks, exit code, process identity, tree cancellation, timeout and close contracts.'
+ Write-Host 'PASS: configured task authorization, command length, startup cleanup, argv/env, bounded chunks, exit code, process identity, tree cancellation, timeout and close contracts.'
 }catch{
  # Do not print runtime paths, environment values, or raw child output.
  $type=$_.Exception.GetType().Name;if($type -cnotmatch '^[A-Za-z0-9_.]{1,128}$'){$type='unknown'}
