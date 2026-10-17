@@ -180,7 +180,7 @@ func New(backend Backend, allowWrite bool) *mcp.Server {
 	for _, definition := range tools(allowWrite) {
 		closed, destructive := false, definition.write
 		annotations := &mcp.ToolAnnotations{ReadOnlyHint: !definition.write, DestructiveHint: &destructive, IdempotentHint: !definition.write, OpenWorldHint: &closed}
-		server.AddTool(&mcp.Tool{Name: definition.name, Description: definition.description, InputSchema: inputSchema(definition.arguments), Annotations: annotations},
+		server.AddTool(&mcp.Tool{Name: definition.name, Description: definition.description, InputSchema: inputSchema(definition.arguments), OutputSchema: outputSchema(), Annotations: annotations},
 			func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 				args, err := decodeArguments(request.Params.Arguments, definition.arguments)
 				if err != nil {

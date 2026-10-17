@@ -273,17 +273,14 @@ func (b *Bridge) run(ctx context.Context, args []string, structured, mutation, g
 	}
 	if guest {
 		if payload, parseErr := decodeJSON(result.stdout); parseErr == nil {
-			if object, objectOK := asObject(payload); objectOK {
-				ok, typed := object["ok"].(bool)
-				_, hasData := object["data"]
-				_, hasError := asObject(object["error"])
-				if typed && ((ok && hasData) || (!ok && hasError)) {
-					if result.exitCode != 0 && ok {
-						return nil, NewError("GUEST_EXIT_MISMATCH", "Guest reported success but exited with an error.", map[string]any{"exit_code": result.exitCode})
-					}
-					return Result(object), nil
-				}
+			response, err := guestEnvelope(payload)
+			if err != nil {
+				return nil, err
 			}
+			if result.exitCode != 0 && response["ok"] == true {
+				return nil, NewError("GUEST_EXIT_MISMATCH", "Guest reported success but exited with an error.", map[string]any{"exit_code": result.exitCode})
+			}
+			return response, nil
 		}
 	}
 	if result.exitCode != 0 {
@@ -674,6 +671,9 @@ func (b *Bridge) Guest(ctx context.Context, vm, action string, params map[string
 		}
 		if (action == "windows.list" || action == "ui.tree") && (session == 0 || !interactive) {
 			return nil, NewError("INTERACTIVE_SESSION_REQUIRED", "Windows UI queries require the logged-in user's interactive session.", nil)
+		}
+		if err := guestDataWithinRequest(action, result["data"], copied); err != nil {
+			return nil, err
 		}
 	}
 	return result, nil
