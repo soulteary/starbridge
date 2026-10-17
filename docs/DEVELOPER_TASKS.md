@@ -79,7 +79,7 @@ starbridge dev task.output VM-UUID --request output.json
 宿主 fake 测试验证授权、输入、参数传输、响应身份、输出预算和未知超时结果。Windows 合成任务验收创建自己的临时 exe、配置和进程树：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\windows\developer-tasks.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& '.\tests\windows\developer-tasks.ps1'"
 ```
 
 该脚本不连接 Parallels，也不操作已有应用。真实 VM 的会话、GUI 与传输行为另按[桌面验收](DESKTOP_TESTING.md)检查。
