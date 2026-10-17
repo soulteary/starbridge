@@ -1,6 +1,6 @@
 # UI query registration. The worker is isolated so a blocked UIA provider has a
 # hard process deadline. This module never loads or changes the legacy helper.
-function Invoke-DevUiWorker([string]$WorkerName, $Parameters, [int]$TimeoutMs) {
+function Invoke-DevUiWorker([string]$WorkerName, $Parameters, [int]$TimeoutMs, [bool]$Mutation = $false) {
     if ($WorkerName -notmatch '^[a-z-]+\.ps1$') { Stop-Dev 'INTERNAL_ERROR' 'Invalid UI worker name.' }
     $workerPath = Join-Path $script:DeveloperRoot ('developer\workers\' + $WorkerName)
     if (!(Test-Path -LiteralPath $workerPath -PathType Leaf)) { Stop-Dev 'UIA_WORKER_UNAVAILABLE' 'Install the complete developer helper directory.' }
@@ -11,6 +11,7 @@ function Invoke-DevUiWorker([string]$WorkerName, $Parameters, [int]$TimeoutMs) {
     $json = ConvertTo-Json -InputObject $Parameters -Depth 12 -Compress
     $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
     $command = "& '" + $workerPath.Replace("'", "''") + "' -RequestBase64 '" + $encoded + "'"
+    if ($Mutation) { $command += ' -AllowWrite' }
     $start = New-Object Diagnostics.ProcessStartInfo
     $start.FileName = $powerShell
     $start.Arguments = '-NoLogo -NoProfile -NonInteractive -Mta -ExecutionPolicy Bypass -EncodedCommand ' + [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
@@ -28,6 +29,7 @@ function Invoke-DevUiWorker([string]$WorkerName, $Parameters, [int]$TimeoutMs) {
         $stderr = $child.StandardError.ReadToEndAsync()
         if (!$child.WaitForExit($TimeoutMs)) {
             try { $child.Kill(); $null = $child.WaitForExit(2000) } catch { }
+            if ($Mutation) { Stop-Dev 'ACTION_TIMEOUT' 'The UI action outcome is unknown after worker timeout. Inspect application state before retrying.' }
             Stop-Dev 'UIA_TIMEOUT' 'UI inspection exceeded timeout_ms; worker termination was attempted.'
         }
         $output = $stdout.GetAwaiter().GetResult()
