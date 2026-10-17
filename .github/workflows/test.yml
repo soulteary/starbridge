@@ -10,8 +10,12 @@ permissions:
 
 jobs:
   go:
-    name: Go host contracts
-    runs-on: ubuntu-latest
+    name: Go host contracts (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
