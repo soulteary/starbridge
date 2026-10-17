@@ -672,7 +672,7 @@ func (b *Bridge) Guest(ctx context.Context, vm, action string, params map[string
 		if (action == "windows.list" || action == "ui.tree") && (session == 0 || !interactive) {
 			return nil, NewError("INTERACTIVE_SESSION_REQUIRED", "Windows UI queries require the logged-in user's interactive session.", nil)
 		}
-		if err := guestData(action, result["data"]); err != nil {
+		if err := guestDataWithinRequest(action, result["data"], copied); err != nil {
 			return nil, err
 		}
 	}

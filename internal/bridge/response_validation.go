@@ -78,9 +78,9 @@ func responseRect(value any, nullable bool) bool {
 	return true
 }
 
-func responseItems(value any, validate func(map[string]any) bool) bool {
+func responseItems(value any, limit int64, validate func(map[string]any) bool) bool {
 	items, ok := value.([]any)
-	if !ok || items == nil {
+	if !ok || items == nil || int64(len(items)) > limit {
 		return false
 	}
 	for _, value := range items {
@@ -100,17 +100,21 @@ func guestData(action string, value any) error {
 	valid := false
 	switch action {
 	case "processes.list":
+		limit, _ := integral(data["limit"])
 		valid = boolValue(data["truncated"]) && responseInteger(data["limit"], 1, 1000) &&
-			responseItems(data["processes"], func(item map[string]any) bool {
+			responseItems(data["processes"], limit, func(item map[string]any) bool {
 				return responseInteger(item["pid"], 0, 2147483647) && nonemptyText(item["name"])
 			})
 	case "windows.list":
+		limit, _ := integral(data["limit"])
 		valid = boolValue(data["truncated"]) && responseInteger(data["limit"], 1, 1000) && nonemptyText(data["coordinate_space"]) &&
-			responseItems(data["windows"], func(item map[string]any) bool {
+			responseItems(data["windows"], limit, func(item map[string]any) bool {
 				return nonemptyText(item["hwnd"]) && responseInteger(item["pid"], 0, 2147483647) &&
 					textValue(item["title"]) && textValue(item["class_name"]) && boolValue(item["is_visible"]) && responseRect(item["rect"], false)
 			})
 	case "ui.tree":
+		maxNodes, _ := integral(data["max_nodes"])
+		maxDepth, _ := integral(data["max_depth"])
 		warnings, warningsOK := data["warnings"].([]any)
 		valid = warningsOK && warnings != nil
 		for _, warning := range warnings {
@@ -119,18 +123,39 @@ func guestData(action string, value any) error {
 		valid = valid && nonemptyText(data["hwnd"]) && nonemptyText(data["snapshot_id"]) && nonemptyText(data["view"]) &&
 			responseInteger(data["max_depth"], 0, 12) && responseInteger(data["max_nodes"], 1, 1000) &&
 			boolValue(data["node_limit_reached"]) && boolValue(data["depth_limit_reached"]) && nonemptyText(data["coordinate_space"]) &&
-			responseItems(data["nodes"], func(item map[string]any) bool {
+			responseItems(data["nodes"], maxNodes, func(item map[string]any) bool {
 				parent, hasParent := item["parent_id"]
 				name, hasName := item["name"]
 				rect, hasRect := item["rect"]
 				return nonemptyText(item["node_id"]) && hasParent && (parent == nil || nonemptyText(parent)) &&
-					responseInteger(item["depth"], 0, 12) && hasName && (name == nil || textValue(name)) && nonemptyText(item["control_type"]) &&
+					responseInteger(item["depth"], 0, maxDepth) && hasName && (name == nil || textValue(name)) && nonemptyText(item["control_type"]) &&
 					responseInteger(item["pid"], 0, 2147483647) && hasRect && responseRect(rect, true) &&
 					boolValue(item["is_enabled"]) && boolValue(item["is_offscreen"]) && boolValue(item["is_password"])
 			})
 	}
 	if !valid {
 		return invalidGuestResponse()
+	}
+	return nil
+}
+
+// A helper may return a stricter bound, but cannot increase the caller's budget
+// by declaring a larger limit in its response. Params are already normalized.
+func guestDataWithinRequest(action string, value any, params map[string]any) error {
+	if err := guestData(action, value); err != nil {
+		return err
+	}
+	data, _ := asObject(value)
+	fields := []string{"limit"}
+	if action == "ui.tree" {
+		fields = []string{"max_nodes", "max_depth"}
+	}
+	for _, field := range fields {
+		declared, validDeclared := integral(data[field])
+		requested, validRequested := integral(params[field])
+		if !validDeclared || !validRequested || declared > requested {
+			return invalidGuestResponse()
+		}
 	}
 	return nil
 }

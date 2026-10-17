@@ -263,7 +263,7 @@ func TestValidation(t *testing.T) {
 func TestGuestRequestEncodingAndPath(t *testing.T) {
 	f := newFixture(t)
 	f.bridge.options.GuestScript = `C:\Program Files\桌面助手\desktop bridge.ps1`
-	f.response.stdout = `{"ok":true,"data":{"processes":[{"name":"程序","pid":42}],"limit":500,"truncated":false},"meta":{"protocol_version":"1","action":"processes.list","session_id":1,"user_interactive":true}}`
+	f.response.stdout = `{"ok":true,"data":{"processes":[{"name":"程序","pid":42}],"limit":17,"truncated":false},"meta":{"protocol_version":"1","action":"processes.list","session_id":1,"user_interactive":true}}`
 	params := map[string]any{"name": "程序 名称 ; $(x)", "limit": 17, "include_path": true}
 	result, err := f.bridge.Guest(context.Background(), "Windows 空格", "processes.list", params)
 	if err != nil {

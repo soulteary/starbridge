@@ -49,6 +49,9 @@ requires nonempty string `error.code` and `error.message` on failure. Successful
 `truncated` and integer `limit`; UI trees require the node and warning arrays,
 snapshot identity, configured bounds and limit flags. Required item identities,
 coordinates and state fields are type-checked. Extra fields remain compatible.
+Returned list/node counts and node depths must respect the declared bounds.
+Declared bounds cannot exceed the host's normalized request, including defaults;
+the helper may report stricter bounds.
 PowerShell's own startup or parameter-binding errors can occur before the script
 runs, so callers must also handle a nonzero exit with no JSON.
 
