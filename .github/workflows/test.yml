@@ -56,7 +56,11 @@ jobs:
         shell: powershell
         run: '& .\tests\windows\developer-ui-action-contract.ps1'
 
-      - name: Parse remaining opt-in desktop scripts
+      - name: Run synthetic screenshot encoding contracts
+        shell: powershell
+        run: '& .\tests\windows\developer-screenshot-contract.ps1'
+
+      - name: Parse remaining desktop scripts
         shell: powershell
         run: |
           Get-ChildItem tests/windows/*.ps1 | ForEach-Object {
