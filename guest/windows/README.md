@@ -118,6 +118,11 @@ Obtain a fresh handle from `windows.list` first:
 ```
 
 `hwnd` is required and must be a nonzero decimal or `0x` hexadecimal string.
+The host accepts ASCII decimal or hexadecimal strings in `1..0x7fffffffffffffff`,
+including leading zeroes and an uppercase `0X` prefix. Before calling this helper,
+it sends a lowercase `0x` hexadecimal value without leading zeroes. For example,
+`000000000000000000001` becomes `0x1`. Direct helper callers should use this short
+form; the helper bounds raw input to 20 decimal digits or 16 hexadecimal digits.
 `max_depth` defaults to `6`, range `0..12`; the root is depth `0`. `max_nodes`
 defaults to `300`, range `1..1000`. `timeout_ms` defaults to `10000`, range
 `1000..20000`, and covers worker startup plus inspection.
