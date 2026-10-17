@@ -187,18 +187,6 @@ function Assert-DevUiForeground([IntPtr]$Handle) {
     if(![StarbridgeDeveloperInput.Native]::PhysicalInputIdle()){Stop-DevUi 'INPUT_BUSY' 'A modifier or mouse button is already held; no input was sent.'}
 }
 
-function Send-DevUiUnicodeText([string]$Text) {
-    return [StarbridgeDeveloperInput.Native]::UnicodeText($Text)
-}
-
-function Invoke-DevUiTextDispatch($Parameters) {
-    $script:DevUiMutationBegan=$true
-    try{$count=Send-DevUiUnicodeText $Parameters.text}
-    catch{Stop-DevUi 'INPUT_FAILED' 'Text input was not confirmed; its outcome is unknown. Inspect state before another write.'}
-    if($count -ne $Parameters.text.Length*2){Stop-DevUi 'INPUT_FAILED' 'Text input was partially inserted or denied; its outcome is unknown. No text retry was attempted.'}
-    return ,[ordered]@{input_count=$count;code_point_count=(Get-DevUiCodePointLength $Parameters.text);utf16_unit_count=$Parameters.text.Length;newline_policy='literal'}
-}
-
 function Invoke-DevUiActionCore([string]$Name,$Parameters) {
     if(([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) -or ([Diagnostics.Process]::GetCurrentProcess().SessionId -eq 0) -or ![Environment]::UserInteractive){
         Stop-DevUi 'INTERACTIVE_SESSION_REQUIRED' 'UI actions require the logged-in Windows interactive session.'
@@ -296,4 +284,16 @@ function Invoke-DevUiActionCore([string]$Name,$Parameters) {
         [StarbridgeDeveloperUi.Native]::LeaveDpi($previousDpi)
         if($null -ne $lease){try{$lease.ReleaseMutex()}finally{$lease.Dispose()}}
     }
+}
+
+function Send-DevUiUnicodeText([string]$Text) {
+    return [StarbridgeDeveloperInput.Native]::UnicodeText($Text)
+}
+
+function Invoke-DevUiTextDispatch($Parameters) {
+    $script:DevUiMutationBegan=$true
+    try{$count=Send-DevUiUnicodeText $Parameters.text}
+    catch{Stop-DevUi 'INPUT_FAILED' 'Text input was not confirmed; its outcome is unknown. Inspect state before another write.'}
+    if($count -ne $Parameters.text.Length*2){Stop-DevUi 'INPUT_FAILED' 'Text input was partially inserted or denied; its outcome is unknown. No text retry was attempted.'}
+    return ,[ordered]@{input_count=$count;code_point_count=(Get-DevUiCodePointLength $Parameters.text);utf16_unit_count=$Parameters.text.Length;newline_policy='literal'}
 }
