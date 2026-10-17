@@ -94,15 +94,15 @@ function Register-DeveloperAction {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
         [Parameter(Mandatory = $true)][scriptblock]$Handler,
-        [bool]$Mutation = $false,
-        [bool]$Interactive = $false,
+        [switch]$Mutation,
+        [switch]$Interactive,
         [string]$Description = ''
     )
     if (($Name -cnotmatch '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$') -or $script:DevActions.ContainsKey($Name)) {
         Stop-Dev 'INVALID_MODULE' 'The developer action registration is invalid or duplicated.'
     }
     if ($script:DevActions.Count -ge 256) { Stop-Dev 'INVALID_MODULE' 'Too many developer actions are installed.' }
-    $script:DevActions.Add($Name, [PSCustomObject]@{ handler=$Handler; mutation=$Mutation; interactive=$Interactive; description=$Description })
+    $script:DevActions.Add($Name, [PSCustomObject]@{ handler=$Handler; mutation=[bool]$Mutation; interactive=[bool]$Interactive; description=$Description })
 }
 
 function New-DevMetadata {
