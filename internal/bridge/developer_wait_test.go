@@ -112,3 +112,13 @@ func TestDeveloperWaitDryRunNeverObserves(t *testing.T) {
 		t.Fatal("dry run executed backend")
 	}
 }
+
+func TestDeveloperAssertionDoesNotPoll(t *testing.T) {
+	f := newFixture(t)
+	f.response.stdout = `{"ok":true,"data":{"processes":[],"limit":1,"truncated":false},"meta":{"protocol_version":"1","action":"processes.list","session_id":1,"user_interactive":true}}`
+	_, err := f.bridge.Developer(context.Background(), "synthetic-vm", "assert.matches", waitRequest("processes.list"), false)
+	checkCode(t, err, "ASSERTION_FAILED")
+	if f.calls != 1 {
+		t.Fatal("assertion polled backend")
+	}
+}

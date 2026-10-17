@@ -15,6 +15,22 @@ var waitPathPart = regexp.MustCompile(`^(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]{1,4})$`)
 
 func init() {
 	registerDeveloperAction(DeveloperAction{
+		Name: "assert.matches", Description: "Assert one read-only observation without polling or retrying a mutation.", Normalize: normalizeWait,
+		ValidateResult: func(data map[string]any) bool { return data["matched"] == true },
+		Execute: func(ctx context.Context, b *Bridge, vm string, p map[string]any, _ bool) (Result, error) {
+			params, _ := asObject(p["params"])
+			result, err := b.waitObservation(ctx, vm, p["action"].(string), params)
+			if err != nil || result["ok"] == false {
+				return result, err
+			}
+			predicate, _ := asObject(p["predicate"])
+			if !matchesWait(result, predicate) {
+				return nil, NewError("ASSERTION_FAILED", "The read-only observation did not match the required condition.", nil)
+			}
+			return Success(map[string]any{"matched": true, "observation": result}), nil
+		},
+	})
+	registerDeveloperAction(DeveloperAction{
 		Name: "wait.until", Description: "Wait for an explicit read-only observation predicate; never retry a mutation.",
 		Normalize: normalizeWait, ValidateResult: func(data map[string]any) bool { return data["matched"] == true },
 		Execute: func(ctx context.Context, b *Bridge, vm string, p map[string]any, _ bool) (Result, error) {
@@ -179,18 +195,7 @@ func (b *Bridge) waitUntil(ctx context.Context, vm string, p map[string]any) (Re
 			break
 		}
 		attempts++
-		var result Result
-		var err error
-		switch action {
-		case "vm.info":
-			var data any
-			data, err = b.VMInfo(deadline, vm)
-			result = Success(data)
-		case "processes.list", "windows.list", "ui.tree":
-			result, err = b.Guest(deadline, vm, action, params)
-		default:
-			result, err = b.Developer(deadline, vm, action, params, false)
-		}
+		result, err := b.waitObservation(deadline, vm, action, params)
 		if err != nil {
 			failure := Failure(err)["error"].(*Error)
 			lastCode = failure.Code
@@ -227,4 +232,19 @@ func (b *Bridge) waitUntil(ctx context.Context, vm string, p map[string]any) (Re
 		code = "INTERRUPTED"
 	}
 	return nil, NewError(code, "The observation condition was not satisfied before waiting ended.", map[string]any{"attempts": attempts, "last_error_code": lastCode, "elapsed_ms": time.Since(started).Milliseconds(), "outcome": "no_result"})
+}
+
+func (b *Bridge) waitObservation(ctx context.Context, vm, action string, params map[string]any) (Result, error) {
+	switch action {
+	case "vm.info":
+		data, err := b.VMInfo(ctx, vm)
+		if err != nil {
+			return nil, err
+		}
+		return Success(data), nil
+	case "processes.list", "windows.list", "ui.tree":
+		return b.Guest(ctx, vm, action, params)
+	default:
+		return b.Developer(ctx, vm, action, params, false)
+	}
 }

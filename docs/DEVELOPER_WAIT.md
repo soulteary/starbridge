@@ -12,4 +12,6 @@
 
 `timeout_ms` 为 1–600000，默认 30000；`interval_ms` 为 10–10000，默认 250。超时返回 `WAIT_TIMEOUT`，取消返回 `INTERRUPTED`，附尝试次数、最后错误码和耗时。成功返回本次观察及匹配信息。可用 `--dry-run` 检查计划，此时不连接 Parallels。
 
+相同参数也可用于 `dev assert.matches VM --request condition.json`。此动作只查询一次，条件不匹配即返回 `ASSERTION_FAILED`，适合检查任务退出码等最终结果；`timeout_ms` / `interval_ms` 不会引入重试或改变单次查询的宿主超时。
+
 准备应用时可依次等待 guest 可用、目标进程出现、窗口出现、特定控件启用或值变化。VM 命令成功、单次 doctor 通过和目标应用就绪是不同检查条件；应按项目需要明确选择。
