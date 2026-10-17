@@ -95,9 +95,10 @@ for version in \
     package="$extraction/$name"
     for required in starbridge INSTALL.txt BUILD.txt README.md CONTRIBUTING.md LICENSE THIRD_PARTY_NOTICES.md go.mod \
         guest/windows/README.md guest/windows/desktop-bridge.ps1 \
+        guest/windows/developer-bridge.ps1 guest/windows/developer/system.ps1 \
         tests/windows/desktop-acceptance.ps1 tests/windows/desktop-fixture.ps1 \
         tests/windows/guest-smoke.ps1 tests/windows/guest-performance.ps1 \
-        tests/windows/parameter-contract.ps1 tests/fixtures/parameters.json; do
+        tests/windows/parameter-contract.ps1 tests/windows/developer-contract.ps1 tests/fixtures/parameters.json; do
       if [ ! -f "$package/$required" ]; then
         printf 'Missing packaged file: %s\n' "$required" >&2
         exit 1
@@ -110,12 +111,17 @@ for version in \
       [ ! -e "$package/$excluded" ]
     done
     cmp "$root/guest/windows/desktop-bridge.ps1" "$package/guest/windows/desktop-bridge.ps1"
+    git -C "$root" ls-files -- guest/windows > "$temporary/guest-files"
+    while IFS= read -r guest_file; do
+      cmp "$root/$guest_file" "$package/$guest_file"
+    done < "$temporary/guest-files"
     cmp "$root/go.mod" "$package/go.mod"
     printf 'fake-macos-%s\n' "$architecture" > "$temporary/expected-binary"
     cmp "$temporary/expected-binary" "$package/starbridge"
     grep -Fx "version=$normalized" "$package/BUILD.txt" > /dev/null
     grep -Fx "arch=$architecture" "$package/BUILD.txt" > /dev/null
     grep -Fx "go_version=$FAKE_GO_TOOLCHAIN" "$package/BUILD.txt" > /dev/null
+    grep -Fx 'developer_protocol=dev-1' "$package/BUILD.txt" > /dev/null
     "$root/scripts/check-package-docs.sh" "$package"
   done
   checks=$((checks + 1))
@@ -139,6 +145,8 @@ fixture="$temporary/source"
 mkdir -p "$fixture"
 tar -xf "$temporary/fixture.tar" -C "$fixture"
 printf 'Will be removed from the index.\n' > "$fixture/docs/removed fixture.md"
+mkdir -p "$fixture/guest/windows/developer/workers"
+printf '# Tracked nested worker fixture.\n' > "$fixture/guest/windows/developer/workers/package-fixture.ps1"
 git -C "$fixture" -c init.defaultBranch=package-test init -q
 git -C "$fixture" add -A
 git -C "$fixture" -c commit.gpgsign=false -c core.hooksPath=/dev/null \
@@ -204,6 +212,7 @@ check_source_snapshot() {
     done
     cmp "$fixture/docs/USAGE.md" "$snapshot_package/docs/USAGE.md"
     cmp "$fixture/guest/windows/desktop-bridge.ps1" "$snapshot_package/guest/windows/desktop-bridge.ps1"
+    cmp "$fixture/guest/windows/developer/workers/package-fixture.ps1" "$snapshot_package/guest/windows/developer/workers/package-fixture.ps1"
   done
 }
 check_source_snapshot 1.2.3 false
@@ -211,7 +220,9 @@ printf 'fixture-only untracked secret\n' > "$fixture/docs/local-secrets.json"
 printf 'fixture-only untracked note\n' > "$fixture/examples/local-notes.txt"
 printf 'fixture-only untracked command\n' > "$fixture/tests/windows/local-command.ps1"
 printf 'fixture-only untracked data\n' > "$fixture/tests/fixtures/local.json"
+printf '# Never package untracked guest extensions.\n' > "$fixture/guest/windows/developer/local.ps1"
 check_source_snapshot 1.2.4 true
+[ ! -e "$snapshot_package/guest/windows/developer/local.ps1" ]
 printf '\nTracked working-tree documentation change.\n' >> "$fixture/docs/USAGE.md"
 printf '\n# Tracked working-tree helper change.\n' >> "$fixture/guest/windows/desktop-bridge.ps1"
 printf 'New indexed file.\n' > "$fixture/docs/indexed space.txt"

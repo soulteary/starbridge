@@ -8,6 +8,24 @@ command, click, input, screenshot, text/value-pattern, or elevation API.
 [Validation guide](../../docs/ACCEPTANCE.md) ·
 [Desktop test fixture](../../docs/DESKTOP_TESTING.md)
 
+## Development actions
+
+The separate `developer-bridge.ps1` entry and adjacent `developer/` directory
+provide registered development actions. Copy both to the same installation root,
+preserving nested worker directories:
+
+```powershell
+New-Item -ItemType Directory -Path 'C:\ProgramData\Starbridge' -Force | Out-Null
+Copy-Item .\guest\windows\developer-bridge.ps1 'C:\ProgramData\Starbridge\'
+Copy-Item .\guest\windows\developer 'C:\ProgramData\Starbridge\' -Recurse -Force
+```
+
+Use `starbridge dev system.info VM` to inspect environment and installed actions.
+Write actions require explicit authorization. See the
+[developer protocol](../../docs/DEVELOPER.md) for CLI and module contracts.
+Replace the complete helper tree when upgrading; copying over an old directory
+can retain removed modules, which `system.info` will still report as installed.
+
 ## Runtime and session
 
 Windows PowerShell 5.1 and the built-in .NET Framework UI Automation assemblies

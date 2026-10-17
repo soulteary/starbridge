@@ -38,9 +38,11 @@ Copy-Item .\guest\windows\desktop-bridge.ps1 C:\ProgramData\Starbridge\desktop-b
 
 协议、会话诊断与参数说明见 [Windows helper](../guest/windows/README.md)。
 
+开发动作另用 `developer-bridge.ps1` 和完整 `developer/` 目录。通过 `dev system.info VM` 探测已安装能力；安装、`--developer-script`、参数文件和写授权见[开发工具](DEVELOPER.md)。
+
 ## 管理虚拟机
 
-将 `VM-UUID`、`SNAPSHOT-UUID` 和 HWND 替换为本机查询所得值。优先使用 UUID，避免改名或重名导致选错 VM。全局选项放在 `vm` / `guest` / `serve` 前。
+将 `VM-UUID`、`SNAPSHOT-UUID` 和 HWND 替换为本机查询所得值。优先使用 UUID，避免改名或重名导致选错 VM。全局选项放在 `vm` / `guest` / `dev` / `serve` 前。
 
 ```sh
 ./bin/starbridge vm list
