@@ -15,7 +15,7 @@ if([Environment]::Is64BitOperatingSystem -and ![Environment]::Is64BitProcess){$p
 $ids=New-Object 'Collections.Generic.List[string]';$phase='setup';$restoreReceipts=@{}
 $script:TaskAssertion='none';$script:TaskError='none';$script:TaskStatus='none'
 $script:TaskWorkerStage='none';$script:TaskWorkerType='none';$script:TaskWorkerLine=0
-$script:TaskNativeStage='none';$script:TaskNativeError=0
+$script:TaskNativeStage='none';$script:TaskNativeError=0;$script:TaskIdentity='none';$script:TaskIdentityType='none';$script:TaskIdentityNative=0;$script:TaskIdentityDelta=0
 function Assert-TaskTest([bool]$Condition,[string]$Label){
  if(!$Condition){
   if($Label -match '^[A-Za-z0-9 /_.:-]{1,96}$'){$script:TaskAssertion=$Label}else{$script:TaskAssertion='invalid_assertion_label'}
@@ -35,11 +35,11 @@ function Remember-TaskTest($Response){
  $data=Get-TaskTestField $Response 'data'
  $code=Get-TaskTestField $data 'error_code' ''
  if($code -is [string] -and $code -cmatch '^[A-Z][A-Z0-9_]{0,63}$'){$script:TaskError=$code}
- foreach($item in @(@('status','TaskStatus','^(starting|running|closing|cancelling|exited|cancelled|timed_out|failed|orphaned)$'),@('failure_stage','TaskWorkerStage','^[a-z_]{1,64}$'),@('failure_exception_type','TaskWorkerType','^[A-Za-z0-9_.]{1,128}$'),@('failure_native_stage','TaskNativeStage','^[a-z_]{1,64}$'))){
+ foreach($item in @(@('status','TaskStatus','^(starting|running|closing|cancelling|exited|cancelled|timed_out|failed|orphaned)$'),@('failure_stage','TaskWorkerStage','^[a-z_]{1,64}$'),@('failure_exception_type','TaskWorkerType','^[A-Za-z0-9_.]{1,128}$'),@('failure_native_stage','TaskNativeStage','^[a-z_]{1,64}$'),@('worker_identity_reason','TaskIdentity','^(matched|unavailable|exited|start_time_mismatch|executable_mismatch)$'),@('worker_identity_exception_type','TaskIdentityType','^[A-Za-z0-9_.]{1,128}$'))){
   $value=Get-TaskTestField $data $item[0] ''
   if($value -is [string] -and $value -cmatch $item[2]){Set-Variable -Name $item[1] -Scope Script -Value $value}
  }
- foreach($item in @(@('failure_line','TaskWorkerLine'),@('failure_native_error','TaskNativeError'))){
+ foreach($item in @(@('failure_line','TaskWorkerLine'),@('failure_native_error','TaskNativeError'),@('worker_identity_native_error','TaskIdentityNative'),@('worker_identity_ticks_delta','TaskIdentityDelta'))){
   $value=Get-TaskTestField $data $item[0]
   if(($value -is [int] -or $value -is [long]) -and $value -ge -2147483648 -and $value -le 2147483647){Set-Variable -Name $item[1] -Scope Script -Value $value}
  }
@@ -178,7 +178,7 @@ public class SyntheticTask {
  # Do not print runtime paths, environment values, or raw child output.
  $type=$_.Exception.GetType().Name;if($type -cnotmatch '^[A-Za-z0-9_.]{1,128}$'){$type='unknown'}
  $line=$_.InvocationInfo.ScriptLineNumber
- [Console]::Error.WriteLine(('Developer task fixture failed: phase={0}; assertion={1}; error={2}; status={3}; worker_stage={4}; worker_type={5}; worker_line={6}; native_stage={7}; native_error={8}; test_type={9}; test_line={10}.' -f $phase,$script:TaskAssertion,$script:TaskError,$script:TaskStatus,$script:TaskWorkerStage,$script:TaskWorkerType,$script:TaskWorkerLine,$script:TaskNativeStage,$script:TaskNativeError,$type,$line))
+ [Console]::Error.WriteLine(('Developer task fixture failed: phase={0}; assertion={1}; error={2}; status={3}; worker_stage={4}; worker_type={5}; worker_line={6}; native_stage={7}; native_error={8}; test_type={9}; test_line={10}; worker_identity={11}; identity_type={12}; identity_native={13}; identity_delta={14}.' -f $phase,$script:TaskAssertion,$script:TaskError,$script:TaskStatus,$script:TaskWorkerStage,$script:TaskWorkerType,$script:TaskWorkerLine,$script:TaskNativeStage,$script:TaskNativeError,$type,$line,$script:TaskIdentity,$script:TaskIdentityType,$script:TaskIdentityNative,$script:TaskIdentityDelta))
  exit 1
 }finally{
  foreach($path in @($restoreReceipts.Keys)){try{[IO.File]::WriteAllText($path,$restoreReceipts[$path],(New-Object Text.UTF8Encoding($false)))}catch{}}

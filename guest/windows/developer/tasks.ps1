@@ -45,21 +45,32 @@ function Get-TaskDirectory([string]$TaskId) {
     return $directory
 }
 function Test-TaskTerminal([string]$Status) { return $Status -in @('exited','cancelled','timed_out','failed','orphaned') }
-function Test-TaskWorker($Identity) {
+function Get-TaskWorkerIdentity($Identity) {
     $process=$null
     try {
         $process=[Diagnostics.Process]::GetProcessById([int]$Identity.pid)
-        return (!$process.HasExited -and $process.StartTime.ToUniversalTime().Ticks -eq [long]$Identity.start_ticks -and
-            [string]::Equals([IO.Path]::GetFullPath($process.MainModule.FileName),[IO.Path]::GetFullPath($Identity.executable),[StringComparison]::OrdinalIgnoreCase))
-    } catch { return $false } finally { if ($null -ne $process) { $process.Dispose() } }
+        if($process.HasExited){return @{valid=$false;reason='exited'}}
+        if($process.StartTime.ToUniversalTime().Ticks -ne [long]$Identity.start_ticks){return @{valid=$false;reason='start_time_mismatch';ticks_delta=($process.StartTime.ToUniversalTime().Ticks-[long]$Identity.start_ticks)}}
+        if(![string]::Equals([IO.Path]::GetFullPath($process.MainModule.FileName),[IO.Path]::GetFullPath($Identity.executable),[StringComparison]::OrdinalIgnoreCase)){return @{valid=$false;reason='executable_mismatch'}}
+        return @{valid=$true;reason='matched'}
+    } catch {
+        $exception=$_.Exception
+        for($depth=0;$depth -lt 8 -and $null -ne $exception.InnerException;$depth++){$exception=$exception.InnerException}
+        $result=@{valid=$false;reason='unavailable';exception_type=$exception.GetType().Name}
+        if($exception -is [ComponentModel.Win32Exception]){$result.native_error=[int]$exception.NativeErrorCode}
+        return $result
+    } finally {if($null-ne$process){$process.Dispose()}}
 }
+function Test-TaskWorker($Identity) { $observation=Get-TaskWorkerIdentity $Identity;return [bool]$observation.valid }
+
 function Get-TaskView([string]$Directory) {
     $receipt=Read-TaskJson (Join-Path $Directory 'receipt.json')
     $statePath=Join-Path $Directory 'state.json'
     $state=$receipt
     if ([IO.File]::Exists($statePath)) { $state=Read-TaskJson $statePath }
     $status=[string]$state.status
-    if (!(Test-TaskTerminal $status) -and !(Test-TaskWorker $receipt.worker)) { $status='orphaned' }
+    $workerIdentity=Get-TaskWorkerIdentity $receipt.worker
+    if (!(Test-TaskTerminal $status) -and !$workerIdentity.valid) { $status='orphaned' }
     $stdout=Join-Path $Directory 'stdout.bin';$stderr=Join-Path $Directory 'stderr.bin'
     $stdoutBytes=0L;$stderrBytes=0L
     if ([IO.File]::Exists($stdout)) { $stdoutBytes=(Get-Item -LiteralPath $stdout).Length }
@@ -68,6 +79,10 @@ function Get-TaskView([string]$Directory) {
         pid=(Get-TaskField $state 'pid');start_time_utc=(Get-TaskField $state 'start_time_utc');exit_code=(Get-TaskField $state 'exit_code')
         stdout_bytes=$stdoutBytes;stderr_bytes=$stderrBytes
         stdout_truncated=[bool](Get-TaskField $state 'stdout_truncated' $false);stderr_truncated=[bool](Get-TaskField $state 'stderr_truncated' $false) }
+    $view['worker_identity_reason']=[string]$workerIdentity.reason
+    foreach($key in @('exception_type','native_error','ticks_delta')){
+        if($workerIdentity.ContainsKey($key)){$view['worker_identity_'+$key]=$workerIdentity[$key]}
+    }
     foreach ($entry in @(@('error_code','^[A-Z][A-Z0-9_]{0,63}$'),@('failure_stage','^[a-z_]{1,64}$'),@('failure_exception_type','^[A-Za-z0-9_.]{1,128}$'),@('failure_native_stage','^[a-z_]{1,64}$'))) {
         $value=Get-TaskField $state $entry[0]
         if($value -is [string] -and $value -cmatch $entry[1]){$view[$entry[0]]=$value}
@@ -153,7 +168,7 @@ function Invoke-TaskStart($p) {
     try {
         if (!$worker.Start()) { Stop-Dev 'TASK_START_FAILED' 'The task worker could not start.' }
         $null=$worker.StandardOutput.ReadToEndAsync();$null=$worker.StandardError.ReadToEndAsync()
-        $identity=[ordered]@{pid=$worker.Id;start_ticks=$worker.StartTime.ToUniversalTime().Ticks;executable=$worker.MainModule.FileName}
+        $identity=[ordered]@{pid=$worker.Id;start_ticks=$worker.StartTime.ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture);executable=$worker.MainModule.FileName}
         Write-TaskJson (Join-Path $directory 'receipt.json') ([ordered]@{task_id=$id;profile=$name;status='starting';created_at=[DateTime]::UtcNow.ToString('o');worker=$identity})
     } catch { Stop-Dev 'TASK_START_FAILED' 'The task worker could not be started or recorded.' }
     finally { $worker.Dispose() }
