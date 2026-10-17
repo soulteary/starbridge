@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"image/png"
+	"slices"
 	"time"
 )
 
@@ -18,16 +19,28 @@ func init() {
 		Interactive: true, Normalize: normalizeDeveloperScreenshot,
 		ValidateResult: validDeveloperScreenshot, ValidateWithinRequest: developerScreenshotWithinRequest,
 	})
+	registerDeveloperAction(DeveloperAction{
+		Name: "screenshot.capabilities", Description: "Probe screenshot OS, API and hardware support without capturing a window; session readiness is reported separately.",
+		Normalize: normalizeDeveloperScreenshotCapabilities, ValidateResult: validDeveloperScreenshotCapabilities,
+	})
 }
 
 func normalizeDeveloperScreenshot(input map[string]any) (map[string]any, error) {
-	if err := uiQueryFields(input, "hwnd", "pid", "start_time_utc", "timeout_ms", "max_bytes", "max_pixels"); err != nil {
+	if err := uiQueryFields(input, "hwnd", "pid", "start_time_utc", "timeout_ms", "max_bytes", "max_pixels", "capture_method"); err != nil {
 		return nil, err
 	}
 	result, err := normalizeDeveloperUIWindow(input)
 	if err != nil {
 		return nil, err
 	}
+	method, err := uiQueryString(input, "capture_method", "print_window", 32)
+	if err != nil {
+		return nil, err
+	}
+	if method != "print_window" && method != "windows_graphics_capture" {
+		return nil, uiQueryArgument("capture_method must be print_window or windows_graphics_capture")
+	}
+	result["capture_method"] = method
 	for _, bound := range []struct {
 		key                string
 		fallback, min, max int64
@@ -52,7 +65,8 @@ func validDeveloperScreenshot(data map[string]any) bool {
 	finishedAt, stampErr := time.Parse(time.RFC3339Nano, stamp)
 	startedAt, startedErr := time.Parse(time.RFC3339Nano, started)
 	if !stampOK || !startedOK || stampErr != nil || startedErr != nil || finishedAt.Before(startedAt) ||
-		data["coordinate_space"] != "guest-screen-physical-pixels" || data["capture_method"] != "print_window" {
+		finishedAt.Sub(startedAt) > 20*time.Second ||
+		data["coordinate_space"] != "guest-screen-physical-pixels" {
 		return false
 	}
 	width, wOK := integral(data["width"])
@@ -71,8 +85,21 @@ func validDeveloperScreenshot(data map[string]any) bool {
 		return false
 	}
 	warnings, warningsOK := data["warnings"].([]any)
-	if !warningsOK || len(warnings) != 1 || warnings[0] != "application-rendered-best-effort" {
+	expectedWarnings := []string{"application-rendered-best-effort"}
+	switch data["capture_method"] {
+	case "print_window":
+	case "windows_graphics_capture":
+		expectedWarnings = []string{"compositor-frame-best-effort", "bgra8-hdr-may-clip", "system-capture-border-may-appear"}
+	default:
 		return false
+	}
+	if !warningsOK || len(warnings) != len(expectedWarnings) {
+		return false
+	}
+	for index, expected := range expectedWarnings {
+		if warnings[index] != expected {
+			return false
+		}
 	}
 	encoded, encodedOK := data["png_base64"].(string)
 	if !encodedOK || len(encoded) > base64.StdEncoding.EncodedLen(developerScreenshotMaxBytes) {
@@ -99,6 +126,9 @@ func validDeveloperScreenshot(data map[string]any) bool {
 }
 
 func developerScreenshotWithinRequest(data, params map[string]any) bool {
+	if data["capture_method"] != params["capture_method"] {
+		return false
+	}
 	for _, key := range []string{"hwnd", "start_time_utc"} {
 		if data[key] != params[key] {
 			return false
@@ -111,5 +141,58 @@ func developerScreenshotWithinRequest(data, params map[string]any) bool {
 	width, _ := integral(data["width"])
 	height, _ := integral(data["height"])
 	maxPixels, _ := integral(params["max_pixels"])
-	return pid == wantPID && length <= maxBytes && width*height <= maxPixels
+	timeout, _ := integral(params["timeout_ms"])
+	startedText, _ := data["capture_started_at"].(string)
+	finishedText, _ := data["timestamp"].(string)
+	started, startedErr := time.Parse(time.RFC3339Nano, startedText)
+	finished, finishedErr := time.Parse(time.RFC3339Nano, finishedText)
+	return pid == wantPID && length <= maxBytes && width*height <= maxPixels && timeout >= 1000 &&
+		startedErr == nil && finishedErr == nil && !finished.Before(started) && finished.Sub(started) <= time.Duration(timeout)*time.Millisecond
+}
+
+func normalizeDeveloperScreenshotCapabilities(input map[string]any) (map[string]any, error) {
+	if err := uiQueryFields(input, "timeout_ms"); err != nil {
+		return nil, err
+	}
+	timeout, err := uiQueryInteger(input, "timeout_ms", 10000, 1000, 20000)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"timeout_ms": timeout}, nil
+}
+
+func validDeveloperScreenshotCapabilities(data map[string]any) bool {
+	if uiQueryFields(data, "probe_scope", "os_build", "session_id", "user_interactive", "capture_requires_input_desktop", "methods") != nil ||
+		data["probe_scope"] != "os-api-device" || !responseInteger(data["os_build"], 0, 2147483647) ||
+		!responseInteger(data["session_id"], 0, 2147483647) || data["capture_requires_input_desktop"] != true {
+		return false
+	}
+	if _, ok := data["user_interactive"].(bool); !ok {
+		return false
+	}
+	methods, ok := data["methods"].([]any)
+	if !ok || len(methods) != 2 {
+		return false
+	}
+	for index, name := range []string{"print_window", "windows_graphics_capture"} {
+		method, ok := asObject(methods[index])
+		if !ok || uiQueryFields(method, "capture_method", "available", "reason") != nil || method["capture_method"] != name {
+			return false
+		}
+		available, ok := method["available"].(bool)
+		if !ok {
+			return false
+		}
+		if available {
+			if method["reason"] != "available" {
+				return false
+			}
+		} else {
+			reason, ok := method["reason"].(string)
+			if !ok || name == "print_window" || !slices.Contains([]string{"WGC_OS_UNSUPPORTED", "WGC_API_UNAVAILABLE", "WGC_UNSUPPORTED", "WGC_ACCESS_DENIED", "WGC_DEVICE_UNAVAILABLE", "WGC_DEVICE_LOST"}, reason) {
+				return false
+			}
+		}
+	}
+	return true
 }

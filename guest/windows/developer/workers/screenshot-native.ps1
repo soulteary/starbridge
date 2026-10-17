@@ -1,6 +1,6 @@
 function Initialize-DevScreenshotNative {
     if ('StarbridgeDeveloperScreenshot.Native' -as [type]) { return }
-    Add-Type -ReferencedAssemblies @('System.dll', 'System.Drawing.dll') -TypeDefinition @'
+    $source=@'
 using System;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -84,4 +84,6 @@ namespace StarbridgeDeveloperScreenshot {
     }
 }
 '@
+    $source += [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'screenshot-wgc.cs'))
+    Add-Type -ReferencedAssemblies @('System.dll', 'System.Drawing.dll') -TypeDefinition $source
 }
