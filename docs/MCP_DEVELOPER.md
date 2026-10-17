@@ -22,6 +22,8 @@ starbridge serve --developer-tools --allow-guest-write \
 
 成功、失败及取消使用同一 [开发协议](DEVELOPER.md) envelope；MCP 的文本内容与结构化内容一致，`isError` 对应 `ok:false`。写操作超时不代表已撤销，先查询实际状态。
 
+`dev.screenshot.capture` 成功时额外返回原生 MCP PNG 图片，客户端可直接显示给视觉模型；文本和结构化结果保留坐标、时间、尺寸及哈希，不重复包含图片 Base64。服务在返回前核对完整 PNG、尺寸、哈希及请求预算。失败与离线预演保持普通 envelope。
+
 ## VM 与嵌套动作授权
 
 [访问策略](MCP_ACCESS.md) 继续按 VM UUID 和工具名授权。开启开发模式不扩大策略中的 grant，例如：
@@ -37,6 +39,8 @@ starbridge serve --developer-tools --allow-guest-write \
 ```
 
 复合动作需要同时获得外层工具及每个内层动作的 grant。例如工作流启动 VM、运行任务并等待状态，需要该 VM 的 `dev.workflow.run`、`vm_start`、`dev.task.start`、`dev.wait.until` 和 `dev.task.status`。显式授予一个工作流工具不等于授予任意内层动作。工具只有在至少一个 VM 获授权时才列出。
+
+单独执行 `dev.workflow.cleanup` 时只检查实际清理动作的 grant 和路径，仍校验整个 profile 的结构及目标 VM；不会要求未执行步骤的权限。
 
 工作流 profile 的 VM 必须与调用 UUID 相同；不能覆盖服务配置的 `developer_script`。MCP 中不开放克隆、创建或恢复快照、删除 VM，以及恢复/删除式回收；这些操作继续使用 CLI。工作流的停止式回收映射到 `vm_stop`，仍需 VM 写开关和 grant。
 

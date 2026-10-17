@@ -1,8 +1,13 @@
 package mcpserver
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"image/png"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -163,7 +168,126 @@ func NewWithOptions(backend Backend, options ServerOptions) (*mcp.Server, error)
 		}
 		definitions = filtered
 	}
-	return newServer(backend, definitions), nil
+	return newDeveloperServer(backend, definitions), nil
+}
+
+// The image action shares the ordinary invocation closure (including workspace,
+// access-policy and coordination checks), but returns native MCP image content.
+// Keeping it out of newServer avoids registering a second generic JSON handler.
+func newDeveloperServer(backend Backend, definitions []tool) *mcp.Server {
+	ordinary := make([]tool, 0, len(definitions))
+	images := []tool{}
+	for _, definition := range definitions {
+		if definition.name == developerToolName("screenshot.capture") && definition.invoke != nil {
+			images = append(images, definition)
+		} else {
+			ordinary = append(ordinary, definition)
+		}
+	}
+	server := newServer(backend, ordinary)
+	for _, definition := range images {
+		open, destructive := definition.interactive, definition.write
+		server.AddTool(&mcp.Tool{Name: definition.name, Description: definition.description, InputSchema: inputSchema(definition.arguments), OutputSchema: outputSchema(),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: !definition.write, DestructiveHint: &destructive, IdempotentHint: !definition.write, OpenWorldHint: &open}},
+			func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				args, err := decodeArguments(request.Params.Arguments, definition.arguments)
+				if err != nil {
+					return toolResult(bridge.Failure(err)), nil
+				}
+				payload, err := definition.invoke(ctx, args)
+				if err != nil {
+					return toolResult(bridge.Failure(err)), nil
+				}
+				return developerImageResult(payload, args["params"].(map[string]any)), nil
+			})
+	}
+	return server
+}
+
+const maxMCPImageBytes = 4 * 1024 * 1024
+const maxMCPImagePixels = 16 * 1024 * 1024
+
+func imageInteger(value any) (int64, bool) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return 0, false
+	}
+	return contract.JSONInteger(json.Number(encoded))
+}
+
+func developerImageResult(payload bridge.Result, params map[string]any) *mcp.CallToolResult {
+	if payload["ok"] != true {
+		return toolResult(payload)
+	}
+	invalid := func() *mcp.CallToolResult {
+		return toolResult(bridge.Failure(bridge.NewError("INVALID_GUEST_RESPONSE", "Screenshot response is not a complete PNG within its declared and requested image budgets.", nil)))
+	}
+	data, ok := payload["data"].(map[string]any)
+	if !ok {
+		return invalid()
+	}
+	if _, hasImage := data["png_base64"]; !hasImage && data["dry_run"] == true {
+		return toolResult(payload)
+	}
+	encoded, ok := data["png_base64"].(string)
+	if !ok || len(encoded) > base64.StdEncoding.EncodedLen(maxMCPImageBytes) {
+		return invalid()
+	}
+	imageBytes, err := base64.StdEncoding.Strict().DecodeString(encoded)
+	if err != nil || len(imageBytes) == 0 || len(imageBytes) > maxMCPImageBytes || base64.StdEncoding.EncodeToString(imageBytes) != encoded {
+		return invalid()
+	}
+	maxBytes, maxPixels := int64(maxMCPImageBytes), int64(8*1024*1024)
+	for _, limit := range []struct {
+		name        string
+		min, max    int64
+		destination *int64
+	}{{"max_bytes", 1024, maxMCPImageBytes, &maxBytes}, {"max_pixels", 1, maxMCPImagePixels, &maxPixels}} {
+		if value, present := params[limit.name]; present {
+			n, valid := imageInteger(value)
+			if !valid || n < limit.min || n > limit.max {
+				return invalid()
+			}
+			*limit.destination = n
+		}
+	}
+	width, widthOK := imageInteger(data["width"])
+	height, heightOK := imageInteger(data["height"])
+	length, lengthOK := imageInteger(data["byte_length"])
+	if !widthOK || !heightOK || width < 1 || height < 1 || width > 16384 || height > 16384 || width*height > maxPixels ||
+		!lengthOK || length != int64(len(imageBytes)) || length > maxBytes {
+		return invalid()
+	}
+	hash, hashOK := data["sha256"].(string)
+	digest := sha256.Sum256(imageBytes)
+	if !hashOK || hash != hex.EncodeToString(digest[:]) {
+		return invalid()
+	}
+	config, err := png.DecodeConfig(bytes.NewReader(imageBytes))
+	if err != nil || int64(config.Width) != width || int64(config.Height) != height {
+		return invalid()
+	}
+	// Dimensions and compressed bytes are checked before allocating decoded
+	// pixels. A valid PNG header alone is insufficient for an image response.
+	if _, err := png.Decode(bytes.NewReader(imageBytes)); err != nil {
+		return invalid()
+	}
+	metadata := make(bridge.Result, len(payload))
+	for key, value := range payload {
+		metadata[key] = value
+	}
+	metadataData := make(map[string]any, len(data)-1)
+	for key, value := range data {
+		if key != "png_base64" {
+			metadataData[key] = value
+		}
+	}
+	metadata["data"] = metadataData
+	result := toolResult(metadata)
+	// ImageContent.Data contains PNG bytes; the SDK encodes them as Base64 on
+	// the wire and decodes them for clients. Never Base64-encode these twice.
+	result.Content = append(result.Content, &mcp.ImageContent{Data: imageBytes, MIMEType: "image/png"})
+	return result
 }
 
 func RunWithOptions(ctx context.Context, backend Backend, options ServerOptions) error {

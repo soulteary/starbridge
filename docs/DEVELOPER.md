@@ -50,4 +50,4 @@ Register-DeveloperAction -Name 'example.inspect' -Handler {
 
 `Get-DevString $p name default max [-Required]` 按 Unicode 码点计长；缺失使用默认值，显式 null、错误类型或超长会拒绝。`-Required` 要求存在且非空。整数必须精确、有限并在范围内，布尔值不接受字符串或数字。`Assert-DevFields` 拒绝未知字段；`Get-DevField` 保留数组类型。模块返回一个对象，不自行输出 envelope；用 `Stop-Dev CODE MESSAGE` 返回稳定错误，避免把异常中的私密路径和环境值带给调用方。
 
-Windows 基础契约测试：`powershell.exe -NoProfile -File tests/windows/developer-contract.ps1`。它验证真实 PowerShell 子进程、语法、结构、默认值、数组、Unicode、代码指纹与写授权，使用合成模块，不依赖交互桌面；它不替代真实 VM 与桌面验收。
+在项目根目录的 PowerShell 会话中运行基础契约测试：`& .\tests\windows\developer-contract.ps1`。它验证真实 PowerShell 子进程、语法、结构、默认值、数组、Unicode、代码指纹与写授权，使用合成模块，不依赖交互桌面；它不替代真实 VM 与桌面验收。
