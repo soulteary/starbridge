@@ -1,0 +1,12 @@
+{
+  "default": { "mode": "stop" },
+  "vms": {
+    "REPLACE-WITH-SANDBOX-VM-UUID": {
+      "mode": "restore",
+      "snapshot": "REPLACE-WITH-CLEAN-SNAPSHOT-UUID"
+    },
+    "REPLACE-WITH-TEMPORARY-VM-UUID": {
+      "mode": "delete"
+    }
+  }
+}

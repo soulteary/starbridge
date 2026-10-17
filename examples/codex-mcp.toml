@@ -1,0 +1,8 @@
+# Build Starbridge first, then replace command with the binary's absolute path.
+# Copy this table into the appropriate Codex configuration; it is not installed automatically.
+[mcp_servers.starbridge]
+command = "/absolute/project/bin/starbridge"
+args = ["serve"]
+# To expose VM power tools, append "--allow-vm-write" to args.
+startup_timeout_sec = 20
+tool_timeout_sec = 45
