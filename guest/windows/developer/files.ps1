@@ -74,7 +74,7 @@ function Save-DevFileStage($Paths,$State) {
     $temporary = $Paths.metadata + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
     [IO.File]::WriteAllText($temporary,(ConvertTo-Json -InputObject $State -Depth 8 -Compress),(New-Object Text.UTF8Encoding($false)))
     try {
-        if ([IO.File]::Exists($Paths.metadata)) { [IO.File]::Replace($temporary,$Paths.metadata,$null) }
+        if ([IO.File]::Exists($Paths.metadata)) { [IO.File]::Replace($temporary,$Paths.metadata,[System.Management.Automation.Language.NullString]::Value) }
         else { [IO.File]::Move($temporary,$Paths.metadata) }
     } finally { if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) } }
 }
@@ -182,7 +182,7 @@ function Invoke-DevFile([string]$Action,$p) {
             if ($present) {
                 if (!$state.overwrite) { Stop-Dev 'FILE_EXISTS' 'The target already exists.' }
                 if ($null -eq $state.destination_version -or (Get-DevFileVersion $target) -cne $state.destination_version) { Stop-Dev 'FILE_CHANGED' 'The destination changed after transfer preparation.' }
-                [IO.File]::Replace($paths.content,$target,$null)
+                [IO.File]::Replace($paths.content,$target,[System.Management.Automation.Language.NullString]::Value)
             } else {
                 if ($null -ne $state.destination_version) { Stop-Dev 'FILE_CHANGED' 'The destination disappeared after transfer preparation.' }
                 [IO.File]::Move($paths.content,$target)

@@ -47,7 +47,7 @@ function Save([string]$Path, $Value, [bool]$Replace = $false) {
     $stream = [IO.File]::Open($temporary, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
     try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
     try {
-        if ($Replace -and [IO.File]::Exists($Path)) { [IO.File]::Replace($temporary, $Path, $null) }
+        if ($Replace -and [IO.File]::Exists($Path)) { [IO.File]::Replace($temporary, $Path, [System.Management.Automation.Language.NullString]::Value) }
         else { [IO.File]::Move($temporary, $Path) }
     } finally { if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) } }
 }
