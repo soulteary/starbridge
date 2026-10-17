@@ -152,6 +152,7 @@ func TestReadToolsAndValidation(t *testing.T) {
 		{"guest_processes", `{"vm":"Win","name":"记事本 😀","pid":12,"limit":1}`},
 		{"guest_processes", `{"vm":"Win","name":null,"pid":null}`},
 		{"guest_windows", `{"vm":"Win","pid":12}`},
+		{"guest_processes", `{"vm":"Win","pid":12.0,"limit":1.2e1}`},
 		{"guest_ui_tree", `{"vm":"Win","hwnd":"0x123","max_depth":0,"max_nodes":1}`},
 	} {
 		t.Run(test.name+test.args, func(t *testing.T) {
@@ -163,7 +164,7 @@ func TestReadToolsAndValidation(t *testing.T) {
 	}
 	for _, test := range []struct{ name, args string }{
 		{"vm_list", `{"vm":"Win"}`}, {"vm_info", `{}`}, {"vm_info", `{"vm":null}`}, {"vm_info", `{"vm":"-bad"}`},
-		{"guest_processes", `{"vm":"Win","pid":1.0}`}, {"guest_processes", `{"vm":"Win","pid":true}`},
+		{"guest_processes", `{"vm":"Win","pid":1.1}`}, {"guest_processes", `{"vm":"Win","pid":true}`},
 		{"guest_processes", `{"vm":"Win","pid":"12"}`}, {"guest_processes", `{"vm":"Win","pid":2147483648}`},
 		{"guest_processes", `{"vm":"Win","limit":null}`}, {"guest_processes", `{"vm":"Win","limit":0}`},
 		{"guest_processes", `{"vm":"Win","include_path":true}`},

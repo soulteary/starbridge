@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/soulteary/starbridge/internal/bridge"
+	"github.com/soulteary/starbridge/internal/contract"
 	"github.com/soulteary/starbridge/internal/mcpserver"
 	"github.com/soulteary/starbridge/internal/version"
 )
@@ -381,11 +382,11 @@ func dispatch(ctx context.Context, c command, b *bridge.Bridge) (bridge.Result, 
 		if c.action == "ui" {
 			action = "ui.tree"
 			params["hwnd"] = c.values["hwnd"]
-			params["max_depth"] = c.integer("max-depth", 6)
-			params["max_nodes"] = c.integer("max-nodes", 300)
-			params["timeout_ms"] = c.integer("timeout-ms", 10000)
+			params["max_depth"] = c.integer("max-depth", contract.DefaultMaxDepth)
+			params["max_nodes"] = c.integer("max-nodes", contract.DefaultMaxNodes)
+			params["timeout_ms"] = c.integer("timeout-ms", contract.DefaultTimeoutMS)
 		} else {
-			params["limit"] = c.integer("limit", 500)
+			params["limit"] = c.integer("limit", contract.DefaultListLimit)
 			if _, present := c.values["pid"]; present {
 				params["pid"] = c.integer("pid", 0)
 			}

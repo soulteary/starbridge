@@ -111,6 +111,8 @@ try {
     Assert-Contract ($parseErrors.Count -eq 0) ('Guest helper syntax errors: ' + (($parseErrors | ForEach-Object { $_.Message }) -join '; '))
     Write-Host 'PASS: guest helper parses with Windows PowerShell.'
 
+    & (Join-Path $PSScriptRoot 'parameter-contract.ps1') -HelperPath $script:ResolvedHelperPath
+
     $script:PowerShellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     if ([Environment]::Is64BitOperatingSystem -and ![Environment]::Is64BitProcess) {
         $script:PowerShellPath = Join-Path $env:SystemRoot 'Sysnative\WindowsPowerShell\v1.0\powershell.exe'

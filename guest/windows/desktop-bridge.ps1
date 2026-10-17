@@ -57,11 +57,25 @@ function Get-Boolean($Object, [string]$Name, [bool]$Default) {
     return $value
 }
 
+function Get-CodePointLength([string]$Text) {
+    $count = 0
+    for ($index = 0; $index -lt $Text.Length; $index++) {
+        if ([char]::IsSurrogatePair($Text, $index)) { $index++ }
+        $count++
+    }
+    return $count
+}
+
 function Limit-Text($Value, [int]$Limit = 512) {
     if ($null -eq $Value) { return $null }
     $text = [string]$Value
-    if ($text.Length -gt $Limit) { return $text.Substring(0, $Limit) }
-    return $text
+    $offset = 0
+    $count = 0
+    while (($offset -lt $text.Length) -and ($count -lt $Limit)) {
+        if ([char]::IsSurrogatePair($text, $offset)) { $offset += 2 } else { $offset++ }
+        $count++
+    }
+    return $text.Substring(0, $offset)
 }
 
 function Write-Response($Response) {
@@ -261,11 +275,11 @@ namespace Starbridge {
 }
 
 function Get-Processes($Parameters) {
-    $limit = Get-Integer $Parameters 'limit' 200 1 1000
+    $limit = Get-Integer $Parameters 'limit' 500 1 1000
     $targetPid = Get-Integer $Parameters 'pid' 0 0 ([int]::MaxValue)
     $includePath = Get-Boolean $Parameters 'include_path' $false
     $name = Get-Field $Parameters 'name' ''
-    if (($name -isnot [string]) -or $name.Length -gt 256) {
+    if (($name -isnot [string]) -or (Get-CodePointLength $name) -gt 256) {
         Stop-Bridge 'INVALID_REQUEST' 'name must be a string of at most 256 characters.'
     }
     $items = New-Object 'System.Collections.Generic.List[object]'
@@ -317,7 +331,7 @@ function Get-Processes($Parameters) {
 }
 
 function Get-Windows($Parameters) {
-    $limit = Get-Integer $Parameters 'limit' 200 1 1000
+    $limit = Get-Integer $Parameters 'limit' 500 1 1000
     $targetPid = Get-Integer $Parameters 'pid' 0 0 ([int]::MaxValue)
     $includeHidden = Get-Boolean $Parameters 'include_hidden' $false
     Initialize-Native
@@ -344,8 +358,8 @@ function Get-UiOptions($Parameters) {
     }
     return [ordered]@{
         hwnd = $hwnd
-        max_depth = Get-Integer $Parameters 'max_depth' 4 0 12
-        max_nodes = Get-Integer $Parameters 'max_nodes' 250 1 1000
+        max_depth = Get-Integer $Parameters 'max_depth' 6 0 12
+        max_nodes = Get-Integer $Parameters 'max_nodes' 300 1 1000
         timeout_ms = Get-Integer $Parameters 'timeout_ms' 10000 1000 20000
     }
 }
