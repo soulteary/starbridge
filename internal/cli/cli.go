@@ -69,6 +69,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if cmd.area == "serve" {
 		if cmd.opts.DryRun {
 			err = invalid("serve cannot be combined with --dry-run.")
+		} else if _, configured := cmd.values["access-policy"]; configured {
+			err = runMCP(ctx, b, cmd)
 		} else {
 			err = mcpserver.Run(ctx, b, cmd.flags["allow-vm-write"])
 		}
@@ -282,6 +284,7 @@ func commandOptions(area, action string) (map[string]optionKind, bool, []string,
 	}
 	if area == "serve" {
 		schema["allow-vm-write"] = boolOption
+		schema["access-policy"] = stringOption
 		return schema, false, nil, nil
 	}
 	if area == "vm" {
@@ -472,7 +475,7 @@ max-nodes=300, timeout-ms=10000. UI inspection requires an interactive desktop.
 	case "doctor":
 		return "Usage: starbridge [global options] doctor [--vm VM]\n\nInspect the host CLI. With --vm, probe guest session, windows and one UI root.\nRead-only; never starts a VM. Inspect data.ready and checks for readiness.\n"
 	case "serve":
-		return "Usage: starbridge [global options] serve [--allow-vm-write]\n\nServe local MCP tools over stdio. VM mutations are disabled by default.\nCannot be combined with --dry-run. Diagnostics go to stderr.\n"
+		return "Usage: starbridge [global options] serve [--allow-vm-write] [--access-policy FILE]\n\nServe local MCP tools over stdio. VM mutations are disabled by default.\nOptional access policy limits VMs by UUID and tools by name.\nCannot be combined with --dry-run. Diagnostics go to stderr.\n"
 	case "vm":
 		usage := map[string]string{
 			"list": "list", "info": "info VM", "start": "start VM", "stop": "stop VM [--force] [--confirm VM]",
