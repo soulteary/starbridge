@@ -181,7 +181,7 @@ func newDeveloperServer(backend Backend, definitions []tool) *mcp.Server {
 	ordinary := make([]tool, 0, len(definitions))
 	images := []tool{}
 	for _, definition := range definitions {
-		if definition.name == developerToolName("screenshot.capture") && definition.invoke != nil {
+		if (definition.name == developerToolName("screenshot.capture") || definition.name == developerToolName("ui.observe") || definition.name == developerToolName("ui.click")) && definition.invoke != nil {
 			images = append(images, definition)
 		} else {
 			ordinary = append(ordinary, definition)
@@ -201,10 +201,66 @@ func newDeveloperServer(backend Backend, definitions []tool) *mcp.Server {
 				if err != nil {
 					return toolResult(bridge.Failure(err)), nil
 				}
+				if definition.name != developerToolName("screenshot.capture") {
+					return developerVisualImageResult(payload, args["params"].(map[string]any), strings.TrimPrefix(definition.name, "dev.")), nil
+				}
 				return developerImageResult(payload, args["params"].(map[string]any)), nil
 			})
 	}
 	return server
+}
+
+// Visual actions carry exactly one image inside data.screenshot. Validate their
+// complete contract even for optional backends, then remove bytes from both
+// metadata representations without mutating the backend result.
+func developerVisualImageResult(payload bridge.Result, params map[string]any, action string) *mcp.CallToolResult {
+	if payload["ok"] != true {
+		return toolResult(payload)
+	}
+	data, ok := payload["data"].(map[string]any)
+	if !ok {
+		return toolResult(bridge.Failure(bridge.NewError("INVALID_GUEST_RESPONSE", "Invalid visual observation.", nil)))
+	}
+	_, hasScreenshot := data["screenshot"]
+	_, hasPixels := data["png_base64"]
+	_, hasObservation := data["observation"]
+	if data["dry_run"] == true && !hasScreenshot && !hasPixels && !hasObservation {
+		return toolResult(payload)
+	}
+	for _, spec := range bridge.DeveloperActions() {
+		if spec.Name != action {
+			continue
+		}
+		normalized, err := spec.Normalize(params)
+		if err != nil || !spec.ValidateResult(data) || (spec.ValidateWithinRequest != nil && !spec.ValidateWithinRequest(data, normalized)) {
+			return toolResult(bridge.Failure(bridge.NewError("INVALID_GUEST_RESPONSE", "Invalid visual observation.", nil)))
+		}
+		imageResult := developerImageResult(bridge.Success(data["screenshot"]), normalized)
+		if imageResult.IsError {
+			return imageResult
+		}
+		metadataData := make(map[string]any, len(data))
+		for k, v := range data {
+			metadataData[k] = v
+		}
+		screenshot := data["screenshot"].(map[string]any)
+		metadataImage := make(map[string]any, len(screenshot)-1)
+		for k, v := range screenshot {
+			if k != "png_base64" {
+				metadataImage[k] = v
+			}
+		}
+		metadataData["screenshot"] = metadataImage
+		metadata := make(bridge.Result, len(payload))
+		for k, v := range payload {
+			metadata[k] = v
+		}
+		metadata["data"] = metadataData
+		result := toolResult(metadata)
+		result.Content = append(result.Content, imageResult.Content[len(imageResult.Content)-1])
+		return result
+	}
+	return toolResult(bridge.Failure(bridge.NewError("INVALID_GUEST_RESPONSE", "Unknown visual response action.", nil)))
 }
 
 const maxMCPImageBytes = 4 * 1024 * 1024

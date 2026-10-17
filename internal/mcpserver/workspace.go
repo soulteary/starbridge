@@ -201,6 +201,22 @@ func (w *developerWorkspace) validate(options ServerOptions, action string, p ma
 		return nil, accessDenied()
 	}
 	permissions := []string{developerToolName(action)}
+	if action == "ui.observe" || action == "ui.click" {
+		// The guest worker composes these capabilities internally; authorization
+		// must be checked before any transport or inventory request begins.
+		permissions = append(permissions, developerToolName("screenshot.capture"))
+		if p["include_uia"] != false {
+			permissions = append(permissions, developerToolName("ui.query"))
+		}
+		if action == "ui.click" {
+			permissions = append(permissions, developerToolName("input.mouse"))
+			// Workflow fields may contain a guest-value $ref. An unresolved
+			// focus value must not omit the grant it could require at execution.
+			if focus, present := p["focus"]; present && focus != false {
+				permissions = append(permissions, developerToolName("window.focus"))
+			}
+		}
+	}
 	if spec.Execute == nil {
 		return permissions, nil
 	}

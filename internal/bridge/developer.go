@@ -130,6 +130,13 @@ func (b *Bridge) Developer(ctx context.Context, vm, name string, params map[stri
 				return nil, invalidGuestResponse()
 			}
 		}
+		if name == "ui.observe" || name == "ui.click" {
+			observation, _ := asObject(data["observation"])
+			observedSession, _ := integral(observation["session_id"])
+			if observedSession != sessionID {
+				return nil, invalidGuestResponse()
+			}
+		}
 	}
 	return Result(response), nil
 }
