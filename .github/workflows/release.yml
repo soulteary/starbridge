@@ -49,6 +49,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$RELEASE_TAG" \
+          set --
+          # Build metadata may contain hyphens without making a prerelease.
+          case "${RELEASE_TAG%%+*}" in
+            *-*) set -- --prerelease ;;
+          esac
+          gh release create "$RELEASE_TAG" "$@" \
             --verify-tag --generate-notes --title "Starbridge $RELEASE_TAG" \
             dist/*.tar.gz dist/checksums.txt

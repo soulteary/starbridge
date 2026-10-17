@@ -12,7 +12,7 @@ shasum -a 256 -c checksums.txt
 
 本地可用 `STARBRIDGE_DIST_DIR` 指定输出目录。脚本会清理自己创建的临时目录，不删除已有发布目录；打包不启动 VM、不安装 helper、不发布 Release。开发快照会如实记录 dirty 状态。
 
-普通 CI 和发布前检查会运行以下快速打包回归测试。测试用构建替身验证版本规则、双架构归档、校验和、配套 helper 及文档链接，不编译二进制或发布版本：
+普通 CI 和发布前检查会运行以下快速打包回归测试。测试用构建替身验证版本规则、双架构归档、校验和、配套 helper 及文档链接，并用 gh 替身检查工作流发布命令的参数，不编译二进制、联网或发布版本：
 
 ```sh
 ./tests/release/package-release-test.sh
@@ -21,5 +21,7 @@ shasum -a 256 -c checksums.txt
 实际构建后可解包，并使用 `./scripts/check-package-docs.sh EXTRACTED_PACKAGE_DIRECTORY` 再次检查相对链接目标。
 
 维护者推送 `vMAJOR.MINOR.PATCH` 标签时，Release 工作流先运行 macOS Go 竞态/静态检查和 Windows helper smoke，两者成功后才构建并发布资产。只提交或合并本 PR 不会发布版本。本次修改没有推送标签或发布 Release。
+
+带预发布标识的标签（如 `v1.2.3-rc.1`）会创建 GitHub prerelease。仅构建元数据含连字符（如 `v1.2.3+build-alpha`）仍按稳定版发布。
 
 发布前仍需按 ACCEPTANCE.md 完成真实桌面与 Parallels 验收。当前安装包未做 Apple Developer ID 签名与公证；不要通过脚本自动移除系统隔离属性。

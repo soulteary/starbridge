@@ -116,4 +116,42 @@ if "$root/scripts/check-package-docs.sh" "$package" > "$temporary/broken-link-ou
   exit 1
 fi
 grep -F 'go.mod' "$temporary/broken-link-output" > /dev/null
+
+# Execute the actual workflow publish block with a fake gh, checking the full
+# argument vector without credentials, network access or a GitHub release.
+awk '
+  /^      - name: Publish tested tag assets$/ { publish = 1; next }
+  publish && /^        run: \|$/ { commands = 1; next }
+  commands && /^          / { sub(/^          /, ""); print; next }
+  commands { exit }
+' "$root/.github/workflows/release.yml" > "$temporary/publish-step.sh"
+[ -s "$temporary/publish-step.sh" ]
+cat > "$temporary/bin/gh" <<'FAKE_GH'
+#!/bin/sh
+set -eu
+printf '%s\n' "$@" > "$FAKE_GH_LOG"
+FAKE_GH
+chmod +x "$temporary/bin/gh"
+mkdir -p "$temporary/publish/dist"
+touch "$temporary/publish/dist/amd64.tar.gz" "$temporary/publish/dist/arm64.tar.gz" \
+  "$temporary/publish/dist/checksums.txt"
+publish_checks=0
+for release_case in \
+    v1.2.3:stable v1.2.3-rc.1:pre v1.2.3-alpha.beta.1:pre \
+    v1.2.3-0:pre v1.2.3--alpha:pre v1.2.3+build.7:stable \
+    v1.2.3+build-alpha:stable v1.2.3+-:stable v1.2.3-rc.1+build-alpha:pre; do
+  release_tag=${release_case%:*}
+  release_kind=${release_case##*:}
+  (cd "$temporary/publish" && RELEASE_TAG="$release_tag" FAKE_GH_LOG="$temporary/publish-args" \
+    sh "$temporary/publish-step.sh")
+  {
+    printf '%s\n' release create "$release_tag"
+    if [ "$release_kind" = pre ]; then printf '%s\n' --prerelease; fi
+    printf '%s\n' --verify-tag --generate-notes --title "Starbridge $release_tag" \
+      dist/amd64.tar.gz dist/arm64.tar.gz dist/checksums.txt
+  } > "$temporary/expected-publish-args"
+  cmp "$temporary/expected-publish-args" "$temporary/publish-args"
+  publish_checks=$((publish_checks + 1))
+done
 printf 'Release packaging checks passed: %s version/argument cases; paired archives, checksums and documentation links verified.\n' "$checks"
+printf 'Release publication argument checks passed: %s stable/prerelease cases using the workflow command block.\n' "$publish_checks"
