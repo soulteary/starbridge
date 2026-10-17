@@ -188,6 +188,21 @@ Before relying on this helper, run it directly in a Windows interactive session:
    `session_id`, `user`, and `desktop` with the interactive run. A successful process list alone is not
    evidence that UI inspection through that transport works.
 
+## Query timing samples
+
+Run `tests/windows/guest-performance.ps1` in Windows PowerShell 5.1 to collect
+fresh-process startup, all-process, and targeted-PID timings. The script also
+checks that a live PID is returned alone and that missing PIDs or a mismatched
+name produce empty arrays. It does not launch a VM or an application.
+
+Pass `-Hwnd` from a fresh `windows.list` response in the same interactive session
+to sample UIA with node limits `1,25,100,250,1000`; `-OutputPath` saves the raw
+samples as CSV. `wall_ms` includes the PowerShell process and helper output,
+while `helper_ms` is the helper metadata duration (the worker duration for UIA).
+Compare the same window and environment before and after a change; tree size,
+provider behavior, and startup caches can affect timings. No measured speedup is
+claimed until these samples have been collected on Windows.
+
 ## Microsoft API references
 
 - [EnumWindows: top-level desktop window enumeration](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-enumwindows)

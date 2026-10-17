@@ -269,12 +269,19 @@ function Get-Processes($Parameters) {
         Stop-Bridge 'INVALID_REQUEST' 'name must be a string of at most 256 characters.'
     }
     $items = New-Object 'System.Collections.Generic.List[object]'
-    $all = [Diagnostics.Process]::GetProcesses()
+    $all = @()
+    if ($targetPid -ne 0) {
+        try { $all = @([Diagnostics.Process]::GetProcessById($targetPid)) }
+        catch [ArgumentException] { } # A missing or exited PID is an empty result.
+    } else {
+        $all = [Diagnostics.Process]::GetProcesses()
+    }
     $truncated = $false
     try {
-        foreach ($process in ($all | Sort-Object Id)) {
+        $ordered = $all
+        if ($targetPid -eq 0) { $ordered = $all | Sort-Object Id }
+        foreach ($process in $ordered) {
             try {
-                if (($targetPid -ne 0) -and ($process.Id -ne $targetPid)) { continue }
                 $processName = $process.ProcessName
                 if ($name -and ($processName.IndexOf($name, [StringComparison]::OrdinalIgnoreCase) -lt 0)) { continue }
                 if ($items.Count -ge $limit) { $truncated = $true; break }
@@ -356,8 +363,7 @@ function Visit-UiNode($Element, $ParentId, [int]$Depth) {
     }
     $nodeId = 'n{0:D6}' -f ($script:UiNodes.Count + 1)
     try {
-        $snapshot = $Element.GetUpdatedCache($script:UiCache)
-        $info = $snapshot.Cached
+        $info = $Element.Cached
         $bounds = $info.BoundingRectangle
         $rect = $null
         $finiteBounds = !$bounds.IsEmpty
@@ -394,7 +400,14 @@ function Visit-UiNode($Element, $ParentId, [int]$Depth) {
         $script:UiDepthLimitReached = $true
         return
     }
-    try { $child = $script:UiWalker.GetFirstChild($Element) } catch {
+    try {
+        if ($script:UiNodes.Count -lt $script:UiOptions.max_nodes) {
+            $child = $script:UiWalker.GetFirstChild($Element, $script:UiCache)
+        } else {
+            # Probe only for truncation; do not cache a node we cannot return.
+            $child = $script:UiWalker.GetFirstChild($Element)
+        }
+    } catch {
         Add-UiWarning 'children_unavailable_or_access_denied'
         return
     }
@@ -404,7 +417,13 @@ function Visit-UiNode($Element, $ParentId, [int]$Depth) {
             return
         }
         Visit-UiNode $child $nodeId ($Depth + 1)
-        try { $child = $script:UiWalker.GetNextSibling($child) } catch {
+        try {
+            if ($script:UiNodes.Count -lt $script:UiOptions.max_nodes) {
+                $child = $script:UiWalker.GetNextSibling($child, $script:UiCache)
+            } else {
+                $child = $script:UiWalker.GetNextSibling($child)
+            }
+        } catch {
             Add-UiWarning 'siblings_unavailable_or_access_denied'
             return
         }
@@ -443,7 +462,10 @@ function Get-UiTreeInWorker($Options) {
     )) { $script:UiCache.Add($property) }
     $dpi = [Starbridge.Native]::EnterDpiContext()
     try {
-        try { $root = [System.Windows.Automation.AutomationElement]::FromHandle($windowHandle) } catch {
+        try {
+            $root = [System.Windows.Automation.AutomationElement]::FromHandle($windowHandle)
+            $root = $root.GetUpdatedCache($script:UiCache)
+        } catch {
             Stop-Bridge 'UIA_UNAVAILABLE' 'UI Automation could not open this window in the current session.'
         }
         Visit-UiNode $root $null 0
