@@ -6,3 +6,5 @@ coverage.out
 *.prof
 .DS_Store
 recycle-policy.local.json
+
+/dist/

@@ -15,6 +15,10 @@ Starbridge 面向虚拟机与容器，**第一期仅实现 Parallels Desktop 后
 
 Windows 桌面能力目前只读；尚未实现点击、输入、截图、任意 guest 命令执行或通用容器管理。窗口和控件读取仍需在真实 Windows VM 完成联调，不能将宿主测试通过视为所有桌面能力已验证。详情见 [验证记录与验收](docs/ACCEPTANCE.md)。
 
+## 安装包
+
+发布资产按 macOS arm64/amd64 提供二进制与同版本 Windows helper，构建规则见 [发布说明](docs/RELEASING.md)。可在 [Releases](https://github.com/soulteary/starbridge/releases) 查看实际发布状态；源码构建仍按下方步骤操作。
+
 ## 快速开始
 
 构建需要 Go 工具链，最低版本见 [go.mod](go.mod)。运行 Parallels 后端需要 macOS，以及支持 CLI 的 Parallels Desktop 版本与授权。从源码项目根目录构建并运行：
