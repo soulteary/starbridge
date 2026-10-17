@@ -44,9 +44,17 @@ jobs:
         shell: powershell
         run: '& .\tests\windows\guest-smoke.ps1'
 
-      - name: Run developer protocol synthetic contracts
+      - name: Run installed developer module synthetic contracts
         shell: powershell
-        run: '& .\tests\windows\developer-contract.ps1'
+        run: |
+          $contracts = Get-ChildItem tests/windows/developer-*.ps1 -File |
+            Where-Object { $_.Name -match '^developer-(contract|tasks|files|bootstrap|.+-contract)\.ps1$' } |
+            Sort-Object Name
+          foreach ($contract in $contracts) {
+            Write-Host ('Running synthetic contract: ' + $contract.Name)
+            & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $contract.FullName
+            if ($LASTEXITCODE -ne 0) { throw ('Synthetic contract failed: ' + $contract.Name) }
+          }
 
       - name: Run synthetic UI query contracts
         shell: powershell
