@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/soulteary/starbridge/internal/bridge"
+	"github.com/soulteary/starbridge/internal/contract"
 )
 
 type developerWorkspace struct {
@@ -444,7 +444,7 @@ func readWorkspaceJSON(path string) (map[string]any, error) {
 		return nil, workspaceDenied()
 	}
 	data, err := io.ReadAll(io.LimitReader(file, 65537))
-	if err != nil || len(data) > 65536 || !utf8.Valid(data) {
+	if err != nil || len(data) > 65536 || !contract.ValidJSONUnicode(data) {
 		return nil, workspaceDenied()
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))

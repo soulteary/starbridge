@@ -72,7 +72,7 @@ foreach($text in @('',([string][char]0xD800),([string][char]0xDFFF),([string][ch
 
 # The same dispatch algorithm is used by production, but the insertion delegate
 # below records event arrays in memory instead of calling user32 SendInput.
-$sender=[Func[StarbridgeDeveloperInput.UnicodeInputEvent[],int]]{
+$sender=[System.Func[StarbridgeDeveloperInput.UnicodeInputEvent[],int]]{
     param($events)
     $script:TextInsertCalls.Add($events.Clone())
     if($script:TextInsertThrows){throw 'synthetic-private-input-canary'}
