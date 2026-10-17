@@ -52,7 +52,7 @@ jobs:
         shell: powershell
         run: '& .\tests\windows\developer-tasks.ps1'
 
-      - name: Parse opt-in desktop acceptance scripts
+      - name: Run file transfer and bootstrap synthetic contracts
         shell: powershell
         run: |
           & .\tests\windows\developer-files.ps1

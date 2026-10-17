@@ -75,6 +75,8 @@ starbridge dev bootstrap.rollback VM --request rollback.json --allow-write
 
 `source_dir` 选择完整配套的 `guest/windows`：必须包含 `desktop-bridge.ps1`、`developer-bridge.ps1`、`developer/system.ps1`，并包括 `developer/` 下所有模块和 worker。只传输 helper 的 `.ps1`、`.cs` 源文件；不会安装用户配置。最多 256 个文件、单文件 8 MiB、合计 64 MiB。`target_dir` 必须显式指定 Windows 驱动器绝对目录，父目录须已存在，目录中各级 reparse point 会被拒绝。
 
+`overwrite:true` 仅允许更新本工具管理的完整安装：旧目录必须包含有效 manifest，文件内容和清单须一致，提交前会再次校验。未知目录返回 `BOOTSTRAP_UNMANAGED_TARGET`；手工安装或包含其他文件的目录请改用新目录安装。
+
 上传到目标旁的独立暂存目录后，loader 核验完整 manifest、各文件长度和 SHA-256；更新时将原目录移至旁边的备份，再切换新目录。目录切换期间会有短暂空档，避免同时调用 helper。结果返回 `installation_id`、`manifest_sha256`、`file_count`、`backup_available`。
 
 安装不启动或停止虚拟机，不安装 Parallels Tools，也不运行被安装的脚本。安装到非默认位置后，使用全局 `--guest-script`、`--developer-script` 指向实际脚本。

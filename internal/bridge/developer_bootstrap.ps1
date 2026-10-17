@@ -114,13 +114,20 @@ try {
         if ([IO.Directory]::Exists($target) -and $r.overwrite -ne $true) { Fail 'FILE_EXISTS' }
         $hadTarget = [IO.Directory]::Exists($target)
         $created = 0L; $written = 0L
-        if ($hadTarget) { $created = [IO.Directory]::GetCreationTimeUtc($target).Ticks; $written = [IO.Directory]::GetLastWriteTimeUtc($target).Ticks }
+        $previousManifestHash = ''
+        if ($hadTarget) {
+            $previousManifestPath = Join-Path $target '.starbridge-manifest.json'
+            if (-not [IO.File]::Exists($previousManifestPath)) { Fail 'BOOTSTRAP_UNMANAGED_TARGET' }
+            $previousManifestHash = Hash $previousManifestPath
+            $null = VerifyTree $target $previousManifestHash
+            $created = [IO.Directory]::GetCreationTimeUtc($target).Ticks; $written = [IO.Directory]::GetLastWriteTimeUtc($target).Ticks
+        }
         $id = [Guid]::NewGuid().ToString('N')
         $stage = $target + '.starbridge-stage-' + $id
         Check $stage
         [void][IO.Directory]::CreateDirectory($stage)
         [void][IO.Directory]::CreateDirectory((Join-Path $stage 'payload'))
-        Save (Join-Path $stage 'control.json') ([ordered]@{installation_id=$id;overwrite=($r.overwrite -eq $true);had_target=$hadTarget;target_created=$created;target_written=$written})
+        Save (Join-Path $stage 'control.json') ([ordered]@{installation_id=$id;overwrite=($r.overwrite -eq $true);had_target=$hadTarget;target_created=$created;target_written=$written;previous_manifest_sha256=$previousManifestHash})
         $data = @{installation_id=$id}
     } else {
         $id = [string]$r.installation_id
@@ -176,6 +183,7 @@ try {
                 if ($hadTarget -and ([IO.Directory]::GetCreationTimeUtc($target).Ticks -ne $control.target_created -or
                     [IO.Directory]::GetLastWriteTimeUtc($target).Ticks -ne $control.target_written)) { Fail 'BOOTSTRAP_CONFLICT' }
                 if ($hadTarget -and $control.overwrite -ne $true) { Fail 'FILE_EXISTS' }
+                if ($hadTarget) { $null = VerifyTree $target $control.previous_manifest_sha256 }
                 if ([IO.Directory]::Exists($backup)) { Fail 'BOOTSTRAP_CONFLICT' }
                 if ($hadTarget) { [IO.Directory]::Move($target, $backup) }
                 try { [IO.Directory]::Move($payload, $target) }

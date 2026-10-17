@@ -54,6 +54,13 @@ function Install-Fixture([string]$Target, [string]$Label, [bool]$Overwrite) {
     return $commit.data
 }
 try {
+    $unmanaged = Join-Path $fixture 'unmanaged'
+    [void][IO.Directory]::CreateDirectory($unmanaged)
+    $unmanagedFile = Join-Path $unmanaged 'synthetic.txt'
+    [IO.File]::WriteAllText($unmanagedFile, 'Synthetic unrelated content')
+    $unmanagedResult = Invoke-Loader @{op='prepare';target_dir=$unmanaged;overwrite=$true}
+    Assert-Bootstrap ($unmanagedResult.ok -eq $false -and $unmanagedResult.error.code -eq 'BOOTSTRAP_UNMANAGED_TARGET') 'unmanaged directory accepted'
+    Assert-Bootstrap ([IO.File]::ReadAllText($unmanagedFile) -ceq 'Synthetic unrelated content') 'unmanaged directory changed'
     $target = Join-Path $fixture 'helper'
     $first = Install-Fixture $target 'first' $false
     Assert-Bootstrap ($first.backup_available -eq $false) 'first installation has no backup'
@@ -101,3 +108,4 @@ try {
 } finally {
     if ([IO.Directory]::Exists($fixture)) { [IO.Directory]::Delete($fixture, $true) }
 }
+exit 0
