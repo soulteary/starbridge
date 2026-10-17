@@ -39,6 +39,7 @@ function Invoke-Helper([string]$EncodedRequest) {
     $startInfo.StandardErrorEncoding = New-Object Text.UTF8Encoding($false, $true)
     $process = New-Object Diagnostics.Process
     $process.StartInfo = $startInfo
+    $stdout = '<not read>'
     try {
         Assert-Contract ($process.Start()) 'The guest helper did not start.'
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
@@ -58,6 +59,10 @@ function Invoke-Helper([string]$EncodedRequest) {
         Assert-Contract ($response.ok -is [bool]) 'The response ok field must be a boolean.'
         Assert-Contract ([string]::IsNullOrWhiteSpace($stderr)) 'The helper wrote unexpected diagnostics to stderr.'
         return [PSCustomObject]@{ response=$response; exit_code=$process.ExitCode }
+    } catch {
+        $exitCode = '<not exited>'
+        try { $exitCode = $process.ExitCode } catch { }
+        throw ('{0}; exit_code={1}; response={2}' -f $_.Exception.Message, $exitCode, $stdout)
     } finally { $process.Dispose() }
 }
 
@@ -136,18 +141,50 @@ try {
     Assert-Contract (!$empty.response.data.truncated) 'An empty result must not be truncated.'
     Write-Host 'PASS: empty process arrays and name filtering.'
 
-    Assert-Failure (Invoke-Helper '@@@') 'INVALID_REQUEST'
-    Assert-Failure (Invoke-Helper ([Convert]::ToBase64String([byte[]]@(0xC3, 0x28)))) 'INVALID_REQUEST'
-    Assert-Failure (Invoke-Helper ([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('{')))) 'INVALID_REQUEST'
-    Assert-Failure (Invoke-Helper (Encode-Request @{ action='not.supported'; params=@{} })) 'UNKNOWN_ACTION'
-    $invalidParameters = @(
-        @{ limit=0 }, @{ limit=1001 }, @{ limit=$true },
-        @{ pid=-1 }, @{ name=123 }, @{ include_path='true' }
+    $rejectedCases = @(
+        @{ name='invalid-base64'; encoded='@@@'; code='INVALID_REQUEST' },
+        @{ name='invalid-utf8'; encoded=[Convert]::ToBase64String([byte[]]@(0xC3, 0x28)); code='INVALID_REQUEST' },
+        @{ name='incomplete-json'; json='{'; code='INVALID_REQUEST' },
+        @{ name='request-empty-array'; json='[]'; code='INVALID_REQUEST' },
+        @{ name='request-singleton-array'; json='[{"action":"processes.list","params":{}}]'; code='INVALID_REQUEST' },
+        @{ name='request-null'; json='null'; code='INVALID_REQUEST' },
+        @{ name='request-scalar'; json='true'; code='INVALID_REQUEST' },
+        @{ name='unknown-action'; json='{"action":"not.supported","params":{}}'; code='UNKNOWN_ACTION' },
+        @{ name='action-singleton-array'; json='{"action":["processes.list"],"params":{}}'; code='UNKNOWN_ACTION' },
+        @{ name='params-empty-array'; json='{"action":"processes.list","params":[]}'; code='INVALID_REQUEST' },
+        @{ name='params-singleton-array'; json='{"action":"processes.list","params":[{}]}'; code='INVALID_REQUEST' },
+        @{ name='params-null'; json='{"action":"processes.list","params":null}'; code='INVALID_REQUEST' },
+        @{ name='params-scalar'; json='{"action":"processes.list","params":false}'; code='INVALID_REQUEST' },
+        @{ name='limit-zero'; json='{"action":"processes.list","params":{"limit":0}}'; code='INVALID_REQUEST' },
+        @{ name='limit-too-large'; json='{"action":"processes.list","params":{"limit":1001}}'; code='INVALID_REQUEST' },
+        @{ name='limit-boolean'; json='{"action":"processes.list","params":{"limit":true}}'; code='INVALID_REQUEST' },
+        @{ name='limit-empty-array'; json='{"action":"processes.list","params":{"limit":[]}}'; code='INVALID_REQUEST' },
+        @{ name='limit-singleton-array'; json='{"action":"processes.list","params":{"limit":[1]}}'; code='INVALID_REQUEST' },
+        @{ name='pid-negative'; json='{"action":"processes.list","params":{"pid":-1}}'; code='INVALID_REQUEST' },
+        @{ name='pid-singleton-array'; json='{"action":"processes.list","params":{"pid":[1]}}'; code='INVALID_REQUEST' },
+        @{ name='name-number'; json='{"action":"processes.list","params":{"name":123}}'; code='INVALID_REQUEST' },
+        @{ name='name-singleton-array'; json='{"action":"processes.list","params":{"name":["notepad"]}}'; code='INVALID_REQUEST' },
+        @{ name='include-path-string'; json='{"action":"processes.list","params":{"include_path":"true"}}'; code='INVALID_REQUEST' },
+        @{ name='include-path-singleton-array'; json='{"action":"processes.list","params":{"include_path":[true]}}'; code='INVALID_REQUEST' }
     )
-    foreach ($parameters in $invalidParameters) {
-        Assert-Failure (Invoke-Helper (Encode-Request @{ action='processes.list'; params=$parameters })) 'INVALID_REQUEST'
+    foreach ($case in $rejectedCases) {
+        $result = $null
+        try {
+            $encoded = $case['encoded']
+            if ($case.ContainsKey('json')) { $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($case.json)) }
+            $result = Invoke-Helper $encoded
+            Assert-Failure $result $case.code
+        } catch {
+            $exitCode = '<not returned>'
+            $response = '<not returned>'
+            if ($null -ne $result) {
+                $exitCode = $result.exit_code
+                $response = ConvertTo-Json -InputObject $result.response -Depth 8 -Compress
+            }
+            throw ("Rejected case '{0}' failed: {1}; exit_code={2}; response={3}" -f $case.name, $_.Exception.Message, $exitCode, $response)
+        }
+        Write-Host ('PASS: rejected case ' + $case.name)
     }
-    Assert-Failure (Invoke-Helper (Encode-Request @{ action='processes.list'; params=@() })) 'INVALID_REQUEST'
     Write-Host 'PASS: malformed input and invalid parameter bounds/types fail as JSON with exit code 1.'
 
     # CI may have no interactive desktop. A valid empty list or an explicit
