@@ -102,6 +102,8 @@ Copy-Item .\guest\windows\desktop-bridge.ps1 C:\ProgramData\Starbridge\desktop-b
 
 实际执行恢复、删除或强制断电时，需要用 `--confirm` 重复相同 VM 标识；预演无需确认。策略执行失败即返回错误，不自动升级为强制停止或删除。快照不会回滚宿主共享文件、网络或外部服务的变化。
 
+使用 `recycle --policy` 时，目标和文件中所有 `vms` 键都必须是 VM UUID，不能使用名称。先通过 `vm list` 获取 UUID；大小写和成对大括号在策略匹配时视为同一 UUID，重复的规范化 UUID 会使整个策略文件被拒绝。执行与 `--confirm` 仍保留原始输入并要求完全相同。此限制也适用于 `--mode` 覆盖和预演，以防名称漏匹配专属策略后落入删除默认策略。预演不会查询 Parallels；未提供策略文件时仍可使用 VM 名称。
+
 也可以直接运行快照恢复与删除命令：
 
 ```sh

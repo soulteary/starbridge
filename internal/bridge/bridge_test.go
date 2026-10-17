@@ -427,17 +427,20 @@ func TestRecyclePoliciesAndPrecedence(t *testing.T) {
 	if mapValue(t, value)["policy_source"] != "built-in default" || !reflect.DeepEqual(f.argv[1:], []string{"stop", "vm"}) {
 		t.Fatal(value, f.argv)
 	}
-	path := policyFile(t, `{"default":{"mode":"stop"},"vms":{"disposable":{"mode":"delete"},"test-win":{"mode":"restore","snapshot":"clean-snapshot"}}}`)
+	const disposable = "00000000-1111-2222-3333-444444444444"
+	const testWin = "00000000-5555-6666-7777-888888888888"
+	const other = "00000000-9999-aaaa-bbbb-cccccccccccc"
+	path := policyFile(t, `{"default":{"mode":"stop"},"vms":{"`+disposable+`":{"mode":"delete"},"`+testWin+`":{"mode":"restore","snapshot":"clean-snapshot"}}}`)
 	for _, test := range []struct {
 		vm, source string
 		opts       RecycleOptions
 		args       []string
 	}{
-		{"other", "policy default", RecycleOptions{PolicyFile: path}, []string{"stop", "other"}},
-		{"disposable", "per-VM policy", RecycleOptions{PolicyFile: path, Confirmation: "disposable"}, []string{"delete", "disposable"}},
-		{"test-win", "per-VM policy", RecycleOptions{PolicyFile: path, Confirmation: "test-win"}, []string{"snapshot-switch", "test-win", "--id", "clean-snapshot", "--skip-resume"}},
-		{"test-win", "command override", RecycleOptions{PolicyFile: path, Mode: "stop"}, []string{"stop", "test-win"}},
-		{"test-win", "per-VM policy", RecycleOptions{PolicyFile: path, Snapshot: "new", Confirmation: "test-win"}, []string{"snapshot-switch", "test-win", "--id", "new", "--skip-resume"}},
+		{other, "policy default", RecycleOptions{PolicyFile: path}, []string{"stop", other}},
+		{disposable, "per-VM policy", RecycleOptions{PolicyFile: path, Confirmation: disposable}, []string{"delete", disposable}},
+		{testWin, "per-VM policy", RecycleOptions{PolicyFile: path, Confirmation: testWin}, []string{"snapshot-switch", testWin, "--id", "clean-snapshot", "--skip-resume"}},
+		{testWin, "command override", RecycleOptions{PolicyFile: path, Mode: "stop"}, []string{"stop", testWin}},
+		{testWin, "per-VM policy", RecycleOptions{PolicyFile: path, Snapshot: "new", Confirmation: testWin}, []string{"snapshot-switch", testWin, "--id", "new", "--skip-resume"}},
 	} {
 		value, err := f.bridge.Recycle(ctx, test.vm, test.opts)
 		if err != nil {

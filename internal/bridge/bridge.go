@@ -488,6 +488,9 @@ func (b *Bridge) Recycle(ctx context.Context, vm string, options RecycleOptions)
 		if readErr != nil || len(data) > MaxOutputBytes {
 			return nil, NewError("INVALID_POLICY", "Could not read recycle policy JSON.", nil)
 		}
+		if err := uniqueRecyclePolicyKeys(data); err != nil {
+			return nil, NewError("INVALID_POLICY", "Recycle policy must be valid JSON without duplicate object keys.", nil)
+		}
 		payload, err := decodeJSON(string(data))
 		if err != nil {
 			return nil, NewError("INVALID_POLICY", "Could not read recycle policy JSON.", nil)
@@ -518,14 +521,19 @@ func (b *Bridge) Recycle(ctx context.Context, vm string, options RecycleOptions)
 		if !validPolicy(defaults) {
 			return nil, NewError("INVALID_POLICY", "Each policy needs mode stop/restore/delete; restore also needs snapshot.", nil)
 		}
-		for _, entry := range overrides {
-			if !validPolicy(entry) {
-				return nil, NewError("INVALID_POLICY", "Each policy needs mode stop/restore/delete; restore also needs snapshot.", nil)
-			}
+		overrides, err = normalizeRecycleOverrides(overrides)
+		if err != nil {
+			return nil, err
+		}
+		// Policies use immutable UUIDs. Reject names rather than resolving them
+		// through prlctl, so dry runs remain offline and cannot miss a UUID grant.
+		uuid, valid := canonicalRecycleUUID(vm)
+		if !valid {
+			return nil, NewError("INVALID_ARGUMENT", "recycle with --policy requires a VM UUID, not a display name. Use vm list to obtain the UUID.", nil)
 		}
 		selected := defaults
 		source = "policy default"
-		if entry, exists := overrides[vm]; exists {
+		if entry, exists := overrides[uuid]; exists {
 			selected, _ = asObject(entry)
 			source = "per-VM policy"
 		}
