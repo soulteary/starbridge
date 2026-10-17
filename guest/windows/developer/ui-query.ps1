@@ -1,7 +1,8 @@
 # UI query registration. The worker is isolated so a blocked UIA provider has a
 # hard process deadline. This module never loads or changes the legacy helper.
-function Invoke-DevUiWorker([string]$WorkerName, $Parameters, [int]$TimeoutMs, [bool]$Mutation = $false) {
+function Invoke-DevUiWorker([string]$WorkerName, $Parameters, [int]$TimeoutMs, [bool]$Mutation = $false, [int]$MaxOutputBytes = 4194304) {
     if ($WorkerName -notmatch '^[a-z-]+\.ps1$') { Stop-Dev 'INTERNAL_ERROR' 'Invalid UI worker name.' }
+    if ($MaxOutputBytes -lt 1024 -or $MaxOutputBytes -gt 6291456) { Stop-Dev 'INTERNAL_ERROR' 'Invalid UI worker output budget.' }
     $workerPath = Join-Path $script:DeveloperRoot ('developer\workers\' + $WorkerName)
     if (!(Test-Path -LiteralPath $workerPath -PathType Leaf)) { Stop-Dev 'UIA_WORKER_UNAVAILABLE' 'Install the complete developer helper directory.' }
     $powerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -34,7 +35,7 @@ function Invoke-DevUiWorker([string]$WorkerName, $Parameters, [int]$TimeoutMs, [
         }
         $output = $stdout.GetAwaiter().GetResult()
         $null = $stderr.GetAwaiter().GetResult()
-        if ([Text.Encoding]::UTF8.GetByteCount($output) -gt 4194304) { Stop-Dev 'OUTPUT_LIMIT_EXCEEDED' 'The UI worker exceeded its output budget.' }
+        if ([Text.Encoding]::UTF8.GetByteCount($output) -gt $MaxOutputBytes) { Stop-Dev 'OUTPUT_LIMIT_EXCEEDED' 'The UI worker exceeded its output budget.' }
         try {
             if (!$output.TrimStart().StartsWith('{')) { throw 'Invalid envelope.' }
             $response = ConvertFrom-Json -InputObject $output -ErrorAction Stop
