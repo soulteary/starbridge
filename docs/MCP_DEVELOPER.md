@@ -22,7 +22,7 @@ starbridge serve --developer-tools --allow-guest-write \
 
 成功、失败及取消使用同一 [开发协议](DEVELOPER.md) envelope；MCP 的文本内容与结构化内容一致，`isError` 对应 `ok:false`。写操作超时不代表已撤销，先查询实际状态。
 
-`dev.screenshot.capture` 成功时额外返回原生 MCP PNG 图片，客户端可直接显示给视觉模型；文本和结构化结果保留坐标、时间、尺寸及哈希，不重复包含图片 Base64。服务在返回前核对完整 PNG、尺寸、哈希及请求预算。失败与离线预演保持普通 envelope。
+`dev.screenshot.capture`、`dev.ui.observe` 和 `dev.ui.click` 成功时额外返回原生 MCP PNG 图片，客户端可直接显示给视觉模型；文本和结构化结果保留坐标、时间、尺寸及哈希，不重复包含图片 Base64。服务在返回前核对完整 PNG、尺寸、哈希及请求预算。失败与离线预演保持普通 envelope。观察凭证、候选坐标及嵌套授权见[视觉操作流程](DEVELOPER_VISUAL.md)。
 
 ## VM 与嵌套动作授权
 

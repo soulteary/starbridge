@@ -187,14 +187,16 @@ function Assert-DevUiForeground([IntPtr]$Handle) {
     if(![StarbridgeDeveloperInput.Native]::PhysicalInputIdle()){Stop-DevUi 'INPUT_BUSY' 'A modifier or mouse button is already held; no input was sent.'}
 }
 
-function Invoke-DevUiActionCore([string]$Name,$Parameters) {
+function Invoke-DevUiActionCore([string]$Name,$Parameters,[switch]$SessionLeaseHeld) {
     if(([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) -or ([Diagnostics.Process]::GetCurrentProcess().SessionId -eq 0) -or ![Environment]::UserInteractive){
         Stop-DevUi 'INTERACTIVE_SESSION_REQUIRED' 'UI actions require the logged-in Windows interactive session.'
     }
     Initialize-DevUiNative;Initialize-DevUiInputNative
     $lease=$null;$previousDpi=[IntPtr]::Zero
     try{
-        $lease=Enter-DevUiSessionLease $Parameters.lock_timeout_ms
+        # A visual operation owns one outer lease across focus, input and its
+        # post-action image. Other callers always acquire their own lease.
+        if(!$SessionLeaseHeld){$lease=Enter-DevUiSessionLease $Parameters.lock_timeout_ms}
         $handle=Assert-DevUiWindow $Parameters
         Assert-DevUiMutationContext $Parameters $handle $Name
         $data=[ordered]@{
