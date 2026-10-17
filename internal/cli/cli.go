@@ -276,6 +276,7 @@ func commandOptions(area, action string) (map[string]optionKind, bool, []string,
 	schema := map[string]optionKind{}
 	var required []string
 	if area == "doctor" {
+		schema["vm"] = stringOption
 		return schema, false, nil, nil
 	}
 	if area == "serve" {
@@ -347,7 +348,11 @@ func dispatch(ctx context.Context, c command, b *bridge.Bridge) (bridge.Result, 
 	var err error
 	switch c.area {
 	case "doctor":
-		data, err = b.Doctor(ctx)
+		if vm, present := c.values["vm"]; present {
+			data, err = b.DoctorVM(ctx, vm)
+		} else {
+			data, err = b.Doctor(ctx)
+		}
 	case "vm":
 		switch c.action {
 		case "list":
@@ -464,7 +469,7 @@ max-nodes=300, timeout-ms=10000. UI inspection requires an interactive desktop.
 	}
 	switch c.area {
 	case "doctor":
-		return "Usage: starbridge [global options] doctor\n\nInspect the host CLI and report guest prerequisites without starting a VM.\n"
+		return "Usage: starbridge [global options] doctor [--vm VM]\n\nInspect the host CLI. With --vm, probe guest session, windows and one UI root.\nRead-only; never starts a VM. Inspect data.ready and checks for readiness.\n"
 	case "serve":
 		return "Usage: starbridge [global options] serve [--allow-vm-write]\n\nServe local MCP tools over stdio. VM mutations are disabled by default.\nCannot be combined with --dry-run. Diagnostics go to stderr.\n"
 	case "vm":
