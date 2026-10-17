@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/soulteary/starbridge/internal/bridge"
+	"github.com/soulteary/starbridge/internal/mcpserver"
 	"github.com/soulteary/starbridge/internal/version"
 )
 
@@ -67,8 +68,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if cmd.area == "serve" {
 		if cmd.opts.DryRun {
 			err = invalid("serve cannot be combined with --dry-run.")
-		} else {
+		} else if _, configured := cmd.values["access-policy"]; configured {
 			err = runMCP(ctx, b, cmd)
+		} else {
+			err = mcpserver.Run(ctx, b, cmd.flags["allow-vm-write"])
 		}
 		if err != nil {
 			writeResult(stderr, bridge.Failure(err))
