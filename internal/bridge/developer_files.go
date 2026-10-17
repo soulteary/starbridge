@@ -370,6 +370,15 @@ func openSource(p string) (*os.File, os.FileInfo, error) {
 	if e := checkLocalPath(p, false); e != nil {
 		return nil, nil, e
 	}
+	before, e := os.Lstat(p)
+	if e != nil {
+		return nil, nil, fileIO("Cannot inspect local source.")
+	}
+	// Opening a FIFO can block before Stat is reachable. Reject non-regular
+	// sources first, then verify that the opened file is the inspected one.
+	if !before.Mode().IsRegular() || before.Size() > maxTransferBytes {
+		return nil, nil, fileArgument("Source must be a regular file of at most 1 GiB.")
+	}
 	f, e := os.Open(p)
 	if e != nil {
 		return nil, nil, fileIO("Cannot open local source.")
@@ -378,6 +387,10 @@ func openSource(p string) (*os.File, os.FileInfo, error) {
 	if e != nil || !st.Mode().IsRegular() || st.Size() > maxTransferBytes {
 		f.Close()
 		return nil, nil, fileArgument("Source must be a regular file of at most 1 GiB.")
+	}
+	if !os.SameFile(before, st) || before.Size() != st.Size() || !before.ModTime().Equal(st.ModTime()) {
+		f.Close()
+		return nil, nil, NewError("FILE_CHANGED", "Local source changed while opening.", nil)
 	}
 	return f, st, nil
 }
@@ -455,6 +468,7 @@ func downloadFile(ctx context.Context, b *Bridge, vm string, p map[string]any) (
 	if e := checkLocalPath(target, true); e != nil {
 		return nil, e
 	}
+	var destination os.FileInfo
 	if st, e := os.Lstat(target); e == nil {
 		if !p["overwrite"].(bool) {
 			return nil, NewError("FILE_EXISTS", "Local destination exists; explicit overwrite is required.", nil)
@@ -462,6 +476,7 @@ func downloadFile(ctx context.Context, b *Bridge, vm string, p map[string]any) (
 		if !st.Mode().IsRegular() {
 			return nil, fileArgument("Local destination must be a regular file.")
 		}
+		destination = st
 	} else if !errors.Is(e, os.ErrNotExist) {
 		return nil, fileIO("Cannot inspect local destination.")
 	}
@@ -506,6 +521,15 @@ func downloadFile(ctx context.Context, b *Bridge, vm string, p map[string]any) (
 	if e = checkLocalPath(target, true); e != nil {
 		return nil, e
 	}
+	current, statErr := os.Lstat(target)
+	changed := destination == nil && !errors.Is(statErr, os.ErrNotExist)
+	if destination != nil {
+		changed = statErr != nil || !current.Mode().IsRegular() || !os.SameFile(destination, current) ||
+			destination.Size() != current.Size() || !destination.ModTime().Equal(current.ModTime())
+	}
+	if changed {
+		return nil, NewError("FILE_CHANGED", "Local destination changed during download; partial bytes are preserved.", nil)
+	}
 	if p["overwrite"].(bool) {
 		e = os.Rename(temp.Name(), target)
 	} else {
@@ -536,6 +560,10 @@ func readSyncProfile(filename string) (syncProfile, error) {
 	if e := checkLocalPath(filename, false); e != nil {
 		return p, e
 	}
+	before, e := os.Lstat(filename)
+	if e != nil || !before.Mode().IsRegular() || before.Size() > 65536 {
+		return p, fileArgument("Sync profile must be a regular JSON file of at most 65536 bytes.")
+	}
 	f, e := os.Open(filename)
 	if e != nil {
 		return p, fileIO("Cannot open sync profile.")
@@ -545,6 +573,9 @@ func readSyncProfile(filename string) (syncProfile, error) {
 	if statErr != nil || !st.Mode().IsRegular() || st.Size() > 65536 {
 		return p, fileArgument("Sync profile must be a regular JSON file of at most 65536 bytes.")
 	}
+	if !os.SameFile(before, st) || before.Size() != st.Size() || !before.ModTime().Equal(st.ModTime()) {
+		return p, NewError("FILE_CHANGED", "Sync profile changed while opening.", nil)
+	}
 	decoder := json.NewDecoder(io.LimitReader(f, 65537))
 	decoder.DisallowUnknownFields()
 	if e = decoder.Decode(&p); e != nil {
@@ -553,6 +584,9 @@ func readSyncProfile(filename string) (syncProfile, error) {
 	var extra any
 	if decoder.Decode(&extra) != io.EOF {
 		return p, fileArgument("Sync profile must contain one object.")
+	}
+	if !sameSource(f, st) {
+		return p, NewError("FILE_CHANGED", "Sync profile changed while reading.", nil)
 	}
 	if p.Source == "" || filepath.IsAbs(p.Source) || strings.Contains(p.Source, `\`) {
 		return p, fileArgument("Profile source must be relative to its directory.")
@@ -630,6 +664,7 @@ func syncFiles(ctx context.Context, b *Bridge, vm string, params map[string]any)
 		return nil, fileArgument("Sync source must be a directory.")
 	}
 	files := []string{}
+	destinations := map[string]bool{}
 	var total int64
 	entries := 0
 	e = filepath.WalkDir(source, func(current string, d os.DirEntry, walkErr error) error {
@@ -666,6 +701,15 @@ func syncFiles(ctx context.Context, b *Bridge, vm string, params map[string]any)
 		if _, e = filePath(rel, false); e != nil {
 			return e
 		}
+		remotePath := path.Join(p.Path, rel)
+		if _, e = filePath(remotePath, false); e != nil {
+			return e
+		}
+		key := strings.ToUpper(remotePath)
+		if destinations[key] {
+			return fileArgument("Sync files have case-conflicting Windows destination paths.")
+		}
+		destinations[key] = true
 		files = append(files, rel)
 		total += info.Size()
 		if len(files) > 2000 || total > 4*maxTransferBytes {

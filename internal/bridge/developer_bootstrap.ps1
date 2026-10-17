@@ -122,12 +122,23 @@ try {
             $null = VerifyTree $target $previousManifestHash
             $created = [IO.Directory]::GetCreationTimeUtc($target).Ticks; $written = [IO.Directory]::GetLastWriteTimeUtc($target).Ticks
         }
+        if ([IO.Directory]::Exists($receipt)) { Fail 'BOOTSTRAP_CONFLICT' }
+        $hadReceipt = [IO.File]::Exists($receipt)
+        $receiptHash = ''
+        if ($hadReceipt) {
+            if (-not $hadTarget) { Fail 'BOOTSTRAP_CONFLICT' }
+            $previousReceipt = Read $receipt
+            if ($previousReceipt.installation_id -cnotmatch '^[0-9a-f]{32}$' -or
+                $previousReceipt.manifest_sha256 -cne $previousManifestHash -or
+                $previousReceipt.backup_available -isnot [bool]) { Fail 'BOOTSTRAP_CONFLICT' }
+            $receiptHash = Hash $receipt
+        }
         $id = [Guid]::NewGuid().ToString('N')
         $stage = $target + '.starbridge-stage-' + $id
         Check $stage
         [void][IO.Directory]::CreateDirectory($stage)
         [void][IO.Directory]::CreateDirectory((Join-Path $stage 'payload'))
-        Save (Join-Path $stage 'control.json') ([ordered]@{installation_id=$id;overwrite=($r.overwrite -eq $true);had_target=$hadTarget;target_created=$created;target_written=$written;previous_manifest_sha256=$previousManifestHash})
+        Save (Join-Path $stage 'control.json') ([ordered]@{installation_id=$id;overwrite=($r.overwrite -eq $true);had_target=$hadTarget;target_created=$created;target_written=$written;previous_manifest_sha256=$previousManifestHash;had_receipt=$hadReceipt;receipt_sha256=$receiptHash})
         $data = @{installation_id=$id}
     } else {
         $id = [string]$r.installation_id
@@ -142,6 +153,7 @@ try {
             if (-not [IO.Directory]::Exists($backup)) { Fail 'BOOTSTRAP_NO_BACKUP' }
             if (-not [IO.Directory]::Exists($target) -or [IO.Directory]::Exists($retired)) { Fail 'BOOTSTRAP_CONFLICT' }
             $null = VerifyTree $target $record.manifest_sha256
+            $null = VerifyTree $backup $record.backup_manifest_sha256
             [IO.Directory]::Move($target, $retired)
             try { [IO.Directory]::Move($backup, $target) }
             catch {
@@ -184,6 +196,8 @@ try {
                     [IO.Directory]::GetLastWriteTimeUtc($target).Ticks -ne $control.target_written)) { Fail 'BOOTSTRAP_CONFLICT' }
                 if ($hadTarget -and $control.overwrite -ne $true) { Fail 'FILE_EXISTS' }
                 if ($hadTarget) { $null = VerifyTree $target $control.previous_manifest_sha256 }
+                if ([IO.Directory]::Exists($receipt) -or [IO.File]::Exists($receipt) -ne $control.had_receipt) { Fail 'BOOTSTRAP_CONFLICT' }
+                if ($control.had_receipt -and (Hash $receipt) -cne $control.receipt_sha256) { Fail 'BOOTSTRAP_CONFLICT' }
                 if ([IO.Directory]::Exists($backup)) { Fail 'BOOTSTRAP_CONFLICT' }
                 if ($hadTarget) { [IO.Directory]::Move($target, $backup) }
                 try { [IO.Directory]::Move($payload, $target) }
@@ -193,7 +207,7 @@ try {
                     }
                     Fail 'BOOTSTRAP_IO'
                 }
-                try { Save $receipt ([ordered]@{installation_id=$id;manifest_sha256=$r.manifest_sha256;backup_available=$hadTarget}) $true }
+                try { Save $receipt ([ordered]@{installation_id=$id;manifest_sha256=$r.manifest_sha256;backup_available=$hadTarget;backup_manifest_sha256=$control.previous_manifest_sha256}) ([bool]$control.had_receipt) }
                 catch { Fail 'BOOTSTRAP_RECOVERY_REQUIRED' }
                 $data = @{installation_id=$id;manifest_sha256=$r.manifest_sha256;file_count=$count;backup_available=$hadTarget}
             } else { Fail 'INVALID_ARGUMENT' }

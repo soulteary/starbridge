@@ -30,7 +30,7 @@ function Get-FixtureHash([byte[]]$Bytes) {
     $hash = [Security.Cryptography.SHA256]::Create()
     try { return ([BitConverter]::ToString($hash.ComputeHash($Bytes))).Replace('-', '').ToLowerInvariant() } finally { $hash.Dispose() }
 }
-function Install-Fixture([string]$Target, [string]$Label, [bool]$Overwrite) {
+function Install-Fixture([string]$Target, [string]$Label, [bool]$Overwrite, $BeforeCommit=$null, [string]$ExpectedCode='') {
     $prepare = Invoke-Loader @{op='prepare';target_dir=$Target;overwrite=$Overwrite}
     Assert-Bootstrap ($prepare.ok -eq $true) 'prepare failed'
     $id = $prepare.data.installation_id
@@ -49,7 +49,12 @@ function Install-Fixture([string]$Target, [string]$Label, [bool]$Overwrite) {
         $put = Invoke-Loader @{op='put';target_dir=$Target;installation_id=$id;path='.starbridge-manifest.json';offset=$offset;data_base64=[Convert]::ToBase64String($chunk)}
         Assert-Bootstrap ($put.ok -eq $true) 'manifest put failed'
     }
+    if ($null -ne $BeforeCommit) { & $BeforeCommit }
     $commit = Invoke-Loader @{op='commit';target_dir=$Target;installation_id=$id;manifest_sha256=(Get-FixtureHash $manifest)}
+    if ($ExpectedCode -ne '') {
+        Assert-Bootstrap ($commit.ok -eq $false -and $commit.error.code -ceq $ExpectedCode) 'expected commit conflict'
+        return $commit
+    }
     Assert-Bootstrap ($commit.ok -eq $true -and $commit.data.file_count -eq 4) 'commit failed'
     return $commit.data
 }
@@ -61,13 +66,33 @@ try {
     $unmanagedResult = Invoke-Loader @{op='prepare';target_dir=$unmanaged;overwrite=$true}
     Assert-Bootstrap ($unmanagedResult.ok -eq $false -and $unmanagedResult.error.code -eq 'BOOTSTRAP_UNMANAGED_TARGET') 'unmanaged directory accepted'
     Assert-Bootstrap ([IO.File]::ReadAllText($unmanagedFile) -ceq 'Synthetic unrelated content') 'unmanaged directory changed'
+    $collisionTarget = Join-Path $fixture 'receipt-collision'
+    $collisionReceipt = $collisionTarget + '.starbridge-receipt.json'
+    [IO.File]::WriteAllText($collisionReceipt, 'Synthetic unrelated receipt')
+    $collision = Invoke-Loader @{op='prepare';target_dir=$collisionTarget;overwrite=$false}
+    Assert-Bootstrap ($collision.ok -eq $false -and $collision.error.code -eq 'BOOTSTRAP_CONFLICT') 'unrelated receipt accepted'
+    Assert-Bootstrap ([IO.File]::ReadAllText($collisionReceipt) -ceq 'Synthetic unrelated receipt') 'unrelated receipt overwritten'
     $target = Join-Path $fixture 'helper'
     $first = Install-Fixture $target 'first' $false
     Assert-Bootstrap ($first.backup_available -eq $false) 'first installation has no backup'
     $denied = Invoke-Loader @{op='prepare';target_dir=$target;overwrite=$false}
     Assert-Bootstrap ($denied.ok -eq $false -and $denied.error.code -eq 'FILE_EXISTS') 'overwrite must be explicit'
+    $receiptPath = $target + '.starbridge-receipt.json'
+    $originalReceipt = [IO.File]::ReadAllBytes($receiptPath)
+    $null = Install-Fixture $target 'receipt-change' $true {
+        [IO.File]::AppendAllText($receiptPath, ' ')
+    } 'BOOTSTRAP_CONFLICT'
+    Assert-Bootstrap ([IO.File]::ReadAllText((Join-Path $target 'desktop-bridge.ps1')).Contains('first')) 'receipt conflict moved current installation'
+    [IO.File]::WriteAllBytes($receiptPath, $originalReceipt)
     $second = Install-Fixture $target 'second' $true
     Assert-Bootstrap ($second.backup_available -eq $true) 'update retains backup'
+    $backupFile = Join-Path ($target + '.starbridge-backup-' + $second.installation_id) 'desktop-bridge.ps1'
+    $backupOriginal = [IO.File]::ReadAllBytes($backupFile)
+    [IO.File]::WriteAllText($backupFile, '# synthetic damaged backup')
+    $damagedBackup = Invoke-Loader @{op='rollback';target_dir=$target;installation_id=$second.installation_id}
+    Assert-Bootstrap ($damagedBackup.ok -eq $false -and $damagedBackup.error.code -eq 'BOOTSTRAP_HASH_MISMATCH') 'damaged backup accepted'
+    Assert-Bootstrap ([IO.File]::ReadAllText((Join-Path $target 'desktop-bridge.ps1')).Contains('second')) 'damaged rollback moved current installation'
+    [IO.File]::WriteAllBytes($backupFile, $backupOriginal)
     $wrong = Invoke-Loader @{op='rollback';target_dir=$target;installation_id=('f' * 32)}
     Assert-Bootstrap ($wrong.ok -eq $false -and $wrong.error.code -eq 'BOOTSTRAP_CONFLICT') 'rollback identity mismatch'
     $extra = Join-Path $target 'unexpected.ps1'

@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf16"
 )
 
@@ -235,6 +236,89 @@ func TestDownloadPreservesDestinationAndPartialOnFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestDownloadRejectsInterveningLocalDestinationChanges(t *testing.T) {
+	for _, change := range []string{"contents", "mtime", "replacement", "appeared", "disappeared"} {
+		t.Run(change, func(t *testing.T) {
+			dir := fileTestDir(t)
+			target := filepath.Join(dir, "fixture.bin")
+			initial := []byte("initial synthetic file")
+			if change != "appeared" {
+				fileWriteTest(t, target, initial)
+			}
+			remote := []byte("synthetic remote artifact")
+			hash := sha256.Sum256(remote)
+			digest := hex.EncodeToString(hash[:])
+			f := newFixture(t)
+			hashCalls := 0
+			var preserved []byte
+			f.bridge.runner = func(_ context.Context, _ string, args []string) (commandResult, error) {
+				request := requestFromArgs(t, args)
+				action := request["action"].(string)
+				data := map[string]any{"root": "artifacts", "path": "fixture.bin", "size_bytes": len(remote), "sha256": digest, "version": "fixture-version"}
+				switch action {
+				case "file.hash":
+					hashCalls++
+					if hashCalls == 2 {
+						switch change {
+						case "contents", "appeared":
+							preserved = []byte("new synthetic edit during download")
+							fileWriteTest(t, target, preserved)
+						case "mtime":
+							st, err := os.Stat(target)
+							if err != nil {
+								t.Fatal(err)
+							}
+							if err := os.Chtimes(target, st.ModTime(), st.ModTime().Add(time.Second)); err != nil {
+								t.Fatal(err)
+							}
+							preserved = initial
+						case "replacement":
+							st, err := os.Stat(target)
+							if err != nil {
+								t.Fatal(err)
+							}
+							preserved = initial
+							replacement := filepath.Join(dir, "replacement.bin")
+							fileWriteTest(t, replacement, preserved)
+							if err := os.Chtimes(replacement, st.ModTime(), st.ModTime()); err != nil {
+								t.Fatal(err)
+							}
+							if err := os.Rename(replacement, target); err != nil {
+								t.Fatal(err)
+							}
+						case "disappeared":
+							if err := os.Remove(target); err != nil {
+								t.Fatal(err)
+							}
+						}
+					}
+				case "file.read":
+					delete(data, "sha256")
+					data["offset"], data["next_offset"], data["eof"] = 0, len(remote), true
+					data["data_base64"] = base64.StdEncoding.EncodeToString(remote)
+				default:
+					t.Fatal("unexpected download action")
+				}
+				return commandResult{stdout: fileEnvelope(action, data)}, nil
+			}
+			_, err := f.bridge.Developer(context.Background(), "fixture-vm", "files.download", map[string]any{"root": "artifacts", "path": "fixture.bin", "local_path": target, "overwrite": true}, true)
+			checkCode(t, err, "FILE_CHANGED")
+			actual, err := os.ReadFile(target)
+			if change == "disappeared" {
+				if !errors.Is(err, os.ErrNotExist) {
+					t.Fatal("download recreated a destination removed during transfer")
+				}
+			} else if err != nil || !reflect.DeepEqual(actual, preserved) {
+				t.Fatal("download overwrote an intervening local change")
+			}
+			partial, err := filepath.Glob(filepath.Join(dir, ".starbridge-part-*"))
+			if err != nil || len(partial) != 1 || hashCalls != 2 {
+				t.Fatal("changed destination lost its partial download or retried transport")
+			}
+		})
+	}
+}
 func TestFileResponseIdentityBudgetAndBase64(t *testing.T) {
 	for _, change := range []string{"none", "root", "path", "offset", "limit", "version", "size", "eof", "encoding"} {
 		t.Run(change, func(t *testing.T) {
@@ -310,6 +394,31 @@ func TestSyncIncrementalExclusionsAndProfileRelativeSource(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatal("invalid profile ran")
+	}
+}
+
+func TestSyncRejectsCaseConflictingWindowsPathsBeforeTransport(t *testing.T) {
+	dir := fileTestDir(t)
+	source := filepath.Join(dir, "src")
+	if err := os.Mkdir(source, 0700); err != nil {
+		t.Fatal(err)
+	}
+	fileWriteTest(t, filepath.Join(source, "A.txt"), []byte("synthetic upper case"))
+	fileWriteTest(t, filepath.Join(source, "a.txt"), []byte("synthetic lower case"))
+	entries, err := os.ReadDir(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Skip("host fixture filesystem is case-insensitive; two distinct A.txt/a.txt files require the Linux/case-sensitive test job")
+	}
+	profile := filepath.Join(dir, "sync.json")
+	fileWriteTest(t, profile, []byte(`{"source":"src","root":"workspace","path":"project","overwrite":true}`))
+	f := newFixture(t)
+	_, err = f.bridge.Developer(context.Background(), "fixture-vm", "files.sync", map[string]any{"profile": profile}, true)
+	checkCode(t, err, "INVALID_ARGUMENT")
+	if f.calls != 0 {
+		t.Fatal("case-conflicting sync modified the guest before rejecting the source tree")
 	}
 }
 func TestTransferRejectsLocalSymbolicLink(t *testing.T) {

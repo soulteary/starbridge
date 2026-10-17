@@ -36,6 +36,8 @@ starbridge dev files.sync VM --request sync-request.json --allow-write
 
 macOS 路径必须显式给出、为规范绝对路径，父目录须已存在，路径中的符号链接会被拒绝。单文件上限为 1 GiB。已有目标默认返回 `FILE_EXISTS`；需要替换时显式设置 `overwrite:true`。
 
+下载发布前再次检查本地目标的身份、大小和修改时间；传输期间目标被修改、替换、创建或删除时返回 `FILE_CHANGED`，保留目标现状和下载临时文件。源文件与配置必须是普通文件，不接受命名管道。同步在任何传输前拒绝会指向同一 Windows 路径的大小写冲突。
+
 上传按 6144 字节分块，检查连续 offset、最终长度和 SHA-256，再在目标文件系统内完成替换。不会先删除旧目标。下载每块上限 65536 字节，核对文件版本及最终 SHA-256，在目标目录内写入 `.starbridge-part-*` 临时文件；校验完成后发布。失败时保留临时文件和已有目标，用户可检查或移除临时文件。
 
 连接超时或中断不能证明 Windows 操作没有发生。写操作不自动重试；检查文件哈希和传输状态后再操作。低层传输返回的 `transfer_id` 可用于主动取消已知暂存上传，程序不会自动取消结果未知的提交。
@@ -76,6 +78,8 @@ starbridge dev bootstrap.rollback VM --request rollback.json --allow-write
 `source_dir` 选择完整配套的 `guest/windows`：必须包含 `desktop-bridge.ps1`、`developer-bridge.ps1`、`developer/system.ps1`，并包括 `developer/` 下所有模块和 worker。只传输 helper 的 `.ps1`、`.cs` 源文件；不会安装用户配置。最多 256 个文件、单文件 8 MiB、合计 64 MiB。`target_dir` 必须显式指定 Windows 驱动器绝对目录，父目录须已存在，目录中各级 reparse point 会被拒绝。
 
 `overwrite:true` 仅允许更新本工具管理的完整安装：旧目录必须包含有效 manifest，文件内容和清单须一致，提交前会再次校验。未知目录返回 `BOOTSTRAP_UNMANAGED_TARGET`；手工安装或包含其他文件的目录请改用新目录安装。
+
+回执存在时必须属于当前安装，提交前检查其身份未变；首次安装不会替换旁边的陌生回执文件。回退同时校验当前安装与备份的完整清单和哈希，损坏备份不会替换有效安装。
 
 上传到目标旁的独立暂存目录后，loader 核验完整 manifest、各文件长度和 SHA-256；更新时将原目录移至旁边的备份，再切换新目录。目录切换期间会有短暂空档，避免同时调用 helper。结果返回 `installation_id`、`manifest_sha256`、`file_count`、`backup_available`。
 
