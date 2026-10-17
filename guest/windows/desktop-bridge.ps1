@@ -57,11 +57,25 @@ function Get-Boolean($Object, [string]$Name, [bool]$Default) {
     return $value
 }
 
+function Get-CodePointLength([string]$Text) {
+    $count = 0
+    for ($index = 0; $index -lt $Text.Length; $index++) {
+        if ([char]::IsSurrogatePair($Text, $index)) { $index++ }
+        $count++
+    }
+    return $count
+}
+
 function Limit-Text($Value, [int]$Limit = 512) {
     if ($null -eq $Value) { return $null }
     $text = [string]$Value
-    if ($text.Length -gt $Limit) { return $text.Substring(0, $Limit) }
-    return $text
+    $offset = 0
+    $count = 0
+    while (($offset -lt $text.Length) -and ($count -lt $Limit)) {
+        if ([char]::IsSurrogatePair($text, $offset)) { $offset += 2 } else { $offset++ }
+        $count++
+    }
+    return $text.Substring(0, $offset)
 }
 
 function Write-Response($Response) {
@@ -261,20 +275,27 @@ namespace Starbridge {
 }
 
 function Get-Processes($Parameters) {
-    $limit = Get-Integer $Parameters 'limit' 200 1 1000
+    $limit = Get-Integer $Parameters 'limit' 500 1 1000
     $targetPid = Get-Integer $Parameters 'pid' 0 0 ([int]::MaxValue)
     $includePath = Get-Boolean $Parameters 'include_path' $false
     $name = Get-Field $Parameters 'name' ''
-    if (($name -isnot [string]) -or $name.Length -gt 256) {
+    if (($name -isnot [string]) -or (Get-CodePointLength $name) -gt 256) {
         Stop-Bridge 'INVALID_REQUEST' 'name must be a string of at most 256 characters.'
     }
     $items = New-Object 'System.Collections.Generic.List[object]'
-    $all = [Diagnostics.Process]::GetProcesses()
+    $all = @()
+    if ($targetPid -ne 0) {
+        try { $all = @([Diagnostics.Process]::GetProcessById($targetPid)) }
+        catch [ArgumentException] { } # A missing or exited PID is an empty result.
+    } else {
+        $all = [Diagnostics.Process]::GetProcesses()
+    }
     $truncated = $false
     try {
-        foreach ($process in ($all | Sort-Object Id)) {
+        $ordered = $all
+        if ($targetPid -eq 0) { $ordered = $all | Sort-Object Id }
+        foreach ($process in $ordered) {
             try {
-                if (($targetPid -ne 0) -and ($process.Id -ne $targetPid)) { continue }
                 $processName = $process.ProcessName
                 if ($name -and ($processName.IndexOf($name, [StringComparison]::OrdinalIgnoreCase) -lt 0)) { continue }
                 if ($items.Count -ge $limit) { $truncated = $true; break }
@@ -310,7 +331,7 @@ function Get-Processes($Parameters) {
 }
 
 function Get-Windows($Parameters) {
-    $limit = Get-Integer $Parameters 'limit' 200 1 1000
+    $limit = Get-Integer $Parameters 'limit' 500 1 1000
     $targetPid = Get-Integer $Parameters 'pid' 0 0 ([int]::MaxValue)
     $includeHidden = Get-Boolean $Parameters 'include_hidden' $false
     Initialize-Native
@@ -337,8 +358,8 @@ function Get-UiOptions($Parameters) {
     }
     return [ordered]@{
         hwnd = $hwnd
-        max_depth = Get-Integer $Parameters 'max_depth' 4 0 12
-        max_nodes = Get-Integer $Parameters 'max_nodes' 250 1 1000
+        max_depth = Get-Integer $Parameters 'max_depth' 6 0 12
+        max_nodes = Get-Integer $Parameters 'max_nodes' 300 1 1000
         timeout_ms = Get-Integer $Parameters 'timeout_ms' 10000 1000 20000
     }
 }
@@ -356,8 +377,7 @@ function Visit-UiNode($Element, $ParentId, [int]$Depth) {
     }
     $nodeId = 'n{0:D6}' -f ($script:UiNodes.Count + 1)
     try {
-        $snapshot = $Element.GetUpdatedCache($script:UiCache)
-        $info = $snapshot.Cached
+        $info = $Element.Cached
         $bounds = $info.BoundingRectangle
         $rect = $null
         $finiteBounds = !$bounds.IsEmpty
@@ -394,7 +414,14 @@ function Visit-UiNode($Element, $ParentId, [int]$Depth) {
         $script:UiDepthLimitReached = $true
         return
     }
-    try { $child = $script:UiWalker.GetFirstChild($Element) } catch {
+    try {
+        if ($script:UiNodes.Count -lt $script:UiOptions.max_nodes) {
+            $child = $script:UiWalker.GetFirstChild($Element, $script:UiCache)
+        } else {
+            # Probe only for truncation; do not cache a node we cannot return.
+            $child = $script:UiWalker.GetFirstChild($Element)
+        }
+    } catch {
         Add-UiWarning 'children_unavailable_or_access_denied'
         return
     }
@@ -404,7 +431,13 @@ function Visit-UiNode($Element, $ParentId, [int]$Depth) {
             return
         }
         Visit-UiNode $child $nodeId ($Depth + 1)
-        try { $child = $script:UiWalker.GetNextSibling($child) } catch {
+        try {
+            if ($script:UiNodes.Count -lt $script:UiOptions.max_nodes) {
+                $child = $script:UiWalker.GetNextSibling($child, $script:UiCache)
+            } else {
+                $child = $script:UiWalker.GetNextSibling($child)
+            }
+        } catch {
             Add-UiWarning 'siblings_unavailable_or_access_denied'
             return
         }
@@ -443,7 +476,10 @@ function Get-UiTreeInWorker($Options) {
     )) { $script:UiCache.Add($property) }
     $dpi = [Starbridge.Native]::EnterDpiContext()
     try {
-        try { $root = [System.Windows.Automation.AutomationElement]::FromHandle($windowHandle) } catch {
+        try {
+            $root = [System.Windows.Automation.AutomationElement]::FromHandle($windowHandle)
+            $root = $root.GetUpdatedCache($script:UiCache)
+        } catch {
             Stop-Bridge 'UIA_UNAVAILABLE' 'UI Automation could not open this window in the current session.'
         }
         Visit-UiNode $root $null 0

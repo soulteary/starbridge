@@ -72,3 +72,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\windows\guest-sm
 8. 仅使用专用 VM 测试三种回收策略。先预演，再实际关机；验证快照中的测试文件恢复；删除场景仅使用可丢弃的克隆。超时后先查询状态，避免盲目重试。
 
 若宿主报告无法连接 Parallels Service，先确认 Parallels 服务状态及执行环境对本机服务的访问权限。本次在受限环境中曾出现该错误，在获准访问宿主服务的环境中读取成功；不能仅凭该提示断定 Parallels 未安装。
+
+## 可控桌面正向验收入口
+
+新增 [桌面测试夹具与执行步骤](DESKTOP_TESTING.md)，覆盖已知 PID/HWND、中文按钮和根节点限制；宿主可使用 `doctor --vm VM` 逐层诊断。
+
+2026-10-17：首次 GitHub Windows smoke 曾失败，后由 [请求类型修复 PR](https://github.com/soulteary/starbridge/pull/1) 修复并通过云端 Windows/Go 检查。该结果不替代真实 UIA、DPI 和 Parallels 桌面验收；新增正向夹具尚待专用 VM 执行。

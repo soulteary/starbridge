@@ -69,6 +69,8 @@ Copy-Item .\guest\windows\desktop-bridge.ps1 C:\ProgramData\Starbridge\desktop-b
 ./bin/starbridge guest ui VM-UUID --hwnd 0x123456 --max-depth 6 --max-nodes 300
 ```
 
+列表默认上限统一为 500，控件树默认深度 6、节点 300、worker 超时 10000 毫秒。MCP 与 bridge 的 JSON 参数按精确数值接受 `12.0`、`1.2e1` 等整数写法，拒绝非整数与越界值，发送给 helper 前统一为普通整数。名称长度按 Unicode 码点计数；emoji 等补充平面字符计为一个字符。
+
 先查询进程和窗口，再使用新取得的 HWND 读取控件树。HWND、PID 和 UIA RuntimeId 都可能失效或被复用，不能当作永久标识。
 
 成功结果包含 `ok:true` 与 `data`；失败结果包含 `ok:false` 与 `error`，退出码为 `1`。guest 响应通过 `meta` 标明协议、会话、采样时间及坐标系。`--help` 与 `--version` 使用普通文本。
@@ -123,7 +125,11 @@ codex mcp add starbridge -- /absolute/project/bin/starbridge serve
 
 配置示例见 [Codex MCP](../examples/codex-mcp.toml)。本版不通过 MCP 暴露删除、快照恢复或任意 shell。
 
+同一 MCP 服务最多并行执行 4 个后端调用，生命周期写操作按目标协调；排队请求支持取消。名称与 UUID 别名、CLI 进程边界详见 [MCP 并发与取消](MCP_CONCURRENCY.md)。
+
 ChatGPT 接入取决于所用环境是否能启动本地 stdio 工具；普通网页聊天不能直接访问 Mac 上的本地进程。当前没有实现远程 HTTP 接入、鉴权或发布插件。
+
+需要限制 MCP 可访问的 VM 与动作时，可使用 `serve --access-policy FILE`。策略按 UUID 授权，并对名称先解析再执行；详见 [MCP 的 VM 与动作授权](MCP_ACCESS.md)。
 
 ## 常见检查
 
