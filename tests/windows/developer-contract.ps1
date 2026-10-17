@@ -109,3 +109,5 @@ Register-DeveloperAction -Name 'contract.write' -Handler { param($p); Assert-Dev
 } finally {
     Remove-Item -LiteralPath $temporary -Recurse -Force
 }
+# Expected negative child-process cases must not become this script's exit code.
+exit 0
