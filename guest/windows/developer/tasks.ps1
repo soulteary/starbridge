@@ -68,7 +68,14 @@ function Get-TaskView([string]$Directory) {
         pid=(Get-TaskField $state 'pid');start_time_utc=(Get-TaskField $state 'start_time_utc');exit_code=(Get-TaskField $state 'exit_code')
         stdout_bytes=$stdoutBytes;stderr_bytes=$stderrBytes
         stdout_truncated=[bool](Get-TaskField $state 'stdout_truncated' $false);stderr_truncated=[bool](Get-TaskField $state 'stderr_truncated' $false) }
-    foreach ($field in @('error_code','failure_stage')) {if ($null -ne $state.PSObject.Properties[$field]) {$view[$field]=[string]$state.$field}}
+    foreach ($entry in @(@('error_code','^[A-Z][A-Z0-9_]{0,63}$'),@('failure_stage','^[a-z_]{1,64}$'),@('failure_exception_type','^[A-Za-z0-9_.]{1,128}$'),@('failure_native_stage','^[a-z_]{1,64}$'))) {
+        $value=Get-TaskField $state $entry[0]
+        if($value -is [string] -and $value -cmatch $entry[1]){$view[$entry[0]]=$value}
+    }
+    foreach($field in @('failure_line','failure_native_error')){
+        $value=Get-TaskField $state $field
+        if(($value -is [int] -or $value -is [long]) -and $value-ge-2147483648 -and $value-le2147483647){$view[$field]=[long]$value}
+    }
     return $view
 }
 function Assert-TaskAbsolutePath([string]$Path) {

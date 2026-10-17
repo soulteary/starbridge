@@ -13,7 +13,37 @@ $helper=(Resolve-Path -LiteralPath $HelperPath).ProviderPath
 $powerShell=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 if([Environment]::Is64BitOperatingSystem -and ![Environment]::Is64BitProcess){$powerShell=Join-Path $env:SystemRoot 'Sysnative\WindowsPowerShell\v1.0\powershell.exe'}
 $ids=New-Object 'Collections.Generic.List[string]';$phase='setup';$restoreReceipts=@{}
-function Assert-TaskTest([bool]$Condition,[string]$Label){if(!$Condition){throw $Label}}
+$script:TaskAssertion='none';$script:TaskError='none';$script:TaskStatus='none'
+$script:TaskWorkerStage='none';$script:TaskWorkerType='none';$script:TaskWorkerLine=0
+$script:TaskNativeStage='none';$script:TaskNativeError=0
+function Assert-TaskTest([bool]$Condition,[string]$Label){
+ if(!$Condition){
+  if($Label -match '^[A-Za-z0-9 /_.:-]{1,96}$'){$script:TaskAssertion=$Label}else{$script:TaskAssertion='invalid_assertion_label'}
+  throw 'Synthetic task assertion failed.'
+ }
+}
+function Get-TaskTestField($Object,[string]$Name,$Default=$null){
+ if($null-eq$Object){return $Default};$property=$Object.PSObject.Properties[$Name]
+ if($null-eq$property){return $Default};return $property.Value
+}
+function Remember-TaskTest($Response){
+ $script:TaskError='none'
+ if(!$Response.ok){
+  $errorObject=Get-TaskTestField $Response 'error';$code=Get-TaskTestField $errorObject 'code' ''
+  if($code -is [string] -and $code -cmatch '^[A-Z][A-Z0-9_]{0,63}$'){$script:TaskError=$code}
+ }
+ $data=Get-TaskTestField $Response 'data'
+ $code=Get-TaskTestField $data 'error_code' ''
+ if($code -is [string] -and $code -cmatch '^[A-Z][A-Z0-9_]{0,63}$'){$script:TaskError=$code}
+ foreach($item in @(@('status','TaskStatus','^(starting|running|closing|cancelling|exited|cancelled|timed_out|failed|orphaned)$'),@('failure_stage','TaskWorkerStage','^[a-z_]{1,64}$'),@('failure_exception_type','TaskWorkerType','^[A-Za-z0-9_.]{1,128}$'),@('failure_native_stage','TaskNativeStage','^[a-z_]{1,64}$'))){
+  $value=Get-TaskTestField $data $item[0] ''
+  if($value -is [string] -and $value -cmatch $item[2]){Set-Variable -Name $item[1] -Scope Script -Value $value}
+ }
+ foreach($item in @(@('failure_line','TaskWorkerLine'),@('failure_native_error','TaskNativeError'))){
+  $value=Get-TaskTestField $data $item[0]
+  if(($value -is [int] -or $value -is [long]) -and $value -ge -2147483648 -and $value -le 2147483647){Set-Variable -Name $item[1] -Scope Script -Value $value}
+ }
+}
 function Invoke-TaskTest([string]$Action,$Parameters,[switch]$Write){
  $request=ConvertTo-Json -InputObject @{action=$Action;params=$Parameters} -Depth 12 -Compress
  $encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($request))
@@ -28,8 +58,9 @@ function Invoke-TaskTest([string]$Action,$Parameters,[switch]$Write){
   if(!$process.WaitForExit(30000)){try{$process.Kill()}catch{};throw 'Test helper deadline exceeded.'}
   $text=$stdout.GetAwaiter().GetResult();$diagnostics=$stderr.GetAwaiter().GetResult()
   Assert-TaskTest ([string]::IsNullOrWhiteSpace($diagnostics)) 'Helper wrote unexpected diagnostics.'
-  $response=ConvertFrom-Json -InputObject $text
+  try{$response=ConvertFrom-Json -InputObject $text -ErrorAction Stop}catch{$script:TaskAssertion='helper_json_decode';throw 'Synthetic helper JSON invalid.'}
   Assert-TaskTest (($response.ok -is [bool]) -and (($process.ExitCode -eq 0) -eq $response.ok)) 'Envelope/exit mismatch.'
+  Remember-TaskTest $response
   return $response
  }finally{$process.Dispose()}
 }
@@ -145,7 +176,9 @@ public class SyntheticTask {
  Write-Host 'PASS: configured task authorization, argv/env, bounded chunks, exit code, process identity, tree cancellation, timeout and close contracts.'
 }catch{
  # Do not print runtime paths, environment values, or raw child output.
- [Console]::Error.WriteLine('Developer task fixture failed during '+$phase+'.')
+ $type=$_.Exception.GetType().Name;if($type -cnotmatch '^[A-Za-z0-9_.]{1,128}$'){$type='unknown'}
+ $line=$_.InvocationInfo.ScriptLineNumber
+ [Console]::Error.WriteLine(('Developer task fixture failed: phase={0}; assertion={1}; error={2}; status={3}; worker_stage={4}; worker_type={5}; worker_line={6}; native_stage={7}; native_error={8}; test_type={9}; test_line={10}.' -f $phase,$script:TaskAssertion,$script:TaskError,$script:TaskStatus,$script:TaskWorkerStage,$script:TaskWorkerType,$script:TaskWorkerLine,$script:TaskNativeStage,$script:TaskNativeError,$type,$line))
  exit 1
 }finally{
  foreach($path in @($restoreReceipts.Keys)){try{[IO.File]::WriteAllText($path,$restoreReceipts[$path],(New-Object Text.UTF8Encoding($false)))}catch{}}
