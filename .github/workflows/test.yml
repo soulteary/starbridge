@@ -31,6 +31,8 @@ jobs:
         run: go vet ./...
       - name: Build CLI and MCP binary
         run: go build -o bin/starbridge ./cmd/starbridge
+      - name: Validate release packaging without compilation or publication
+        run: ./tests/release/package-release-test.sh
 
   windows-guest:
     name: Windows PowerShell 5.1 guest contract

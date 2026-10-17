@@ -16,6 +16,8 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+      - name: Validate release packaging contracts
+        run: ./tests/release/package-release-test.sh
       - run: go test -race ./...
       - run: go vet ./...
 
