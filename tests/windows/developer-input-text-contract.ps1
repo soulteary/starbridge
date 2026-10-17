@@ -72,33 +72,54 @@ foreach($text in @('',([string][char]0xD800),([string][char]0xDFFF),([string][ch
 
 # The same dispatch algorithm is used by production, but the insertion delegate
 # below records event arrays in memory instead of calling user32 SendInput.
-$sender=[System.Func[StarbridgeDeveloperInput.UnicodeInputEvent[],int]]{
-    param($events)
-    $script:TextInsertCalls.Add($events.Clone())
-    if($script:TextInsertThrows){throw 'synthetic-private-input-canary'}
-    return [int]$script:TextInserted
+# Windows PowerShell 5.1 cannot reliably resolve a nested array argument in a
+# generic type literal. Obtain the exact closed type from the production method
+# and bind a C# recorder, avoiding both that parser and ScriptBlock conversion.
+Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+namespace StarbridgeInputTextContract {
+    public sealed class Recorder {
+        public readonly List<Array> Calls = new List<Array>();
+        public int Inserted;
+        public bool ThrowOnInsert;
+        public int Insert(Array events) {
+            Calls.Add((Array)events.Clone());
+            if(ThrowOnInsert)throw new InvalidOperationException("synthetic-private-input-canary");
+            return Inserted;
+        }
+    }
 }
+'@
+$nativeType=[StarbridgeDeveloperInput.Native]
+$senderType=$nativeType.GetMethod('DispatchUnicodeText').GetParameters()[1].ParameterType
+if($senderType.ContainsGenericParameters -or !$senderType.IsSubclassOf([System.MulticastDelegate])){throw 'Dispatch must accept a closed delegate type.'}
+$recorder=New-Object StarbridgeInputTextContract.Recorder
+# Reference-parameter contravariance binds UnicodeInputEvent[] to System.Array;
+# the recorder never needs to reference the separate native dynamic assembly.
+$sender=[System.Delegate]::CreateDelegate($senderType,$recorder,$recorder.GetType().GetMethod('Insert'))
+if($sender.GetType() -ne $senderType){throw 'Recorder delegate differs from the production parameter type.'}
 $text='a'+$emoji
 foreach($sent in @(0,1,2,3,5,6,7,-1)){
-    $script:TextInsertCalls=New-Object 'Collections.Generic.List[object]'
-    $script:TextInsertThrows=$false;$script:TextInserted=$sent
+    $recorder.Calls.Clear()
+    $recorder.ThrowOnInsert=$false;$recorder.Inserted=$sent
     $count=[StarbridgeDeveloperInput.Native]::DispatchUnicodeText($text,$sender)
-    if($sent -eq 6){if($count -ne 6 -or $script:TextInsertCalls.Count -ne 1){throw 'Complete insertion was repeated.'}}
+    if($sent -eq 6){if($count -ne 6 -or $recorder.Calls.Count -ne 1){throw 'Complete insertion was repeated.'}}
     else{
         if($count -ne -1){throw 'Partial insertion was reported as successful.'}
         $expectedCalls=1
         if($sent -gt 0 -and $sent -lt 6 -and $sent%2 -eq 1){$expectedCalls=2}
-        if($script:TextInsertCalls.Count -ne $expectedCalls){throw 'Partial insertion retried text or released unrelated events.'}
+        if($recorder.Calls.Count -ne $expectedCalls){throw 'Partial insertion retried text or released unrelated events.'}
         if($expectedCalls -eq 2){
-            $release=$script:TextInsertCalls[1]
-            $initial=$script:TextInsertCalls[0]
+            $release=$recorder.Calls[1]
+            $initial=$recorder.Calls[0]
             if($release.Length -ne 1 -or $release[0].Flags -ne 6 -or $release[0].VirtualKey -ne 0 -or $release[0].ScanCode -ne $initial[$sent].ScanCode){throw 'Cleanup was not limited to the unmatched Unicode key-up.'}
         }
     }
     $checks++
 }
-$script:TextInsertCalls=New-Object 'Collections.Generic.List[object]';$script:TextInsertThrows=$true
-if([StarbridgeDeveloperInput.Native]::DispatchUnicodeText($text,$sender) -ne -1 -or $script:TextInsertCalls.Count -ne 1){throw 'Insertion exception leaked or retried the operation.'}
+$recorder.Calls.Clear();$recorder.ThrowOnInsert=$true
+if([StarbridgeDeveloperInput.Native]::DispatchUnicodeText($text,$sender) -ne -1 -or $recorder.Calls.Count -ne 1){throw 'Insertion exception leaked or retried the operation.'}
 $checks++
 
 # Exercise the PowerShell mutation boundary with a synthetic native facade.
