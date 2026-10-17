@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/soulteary/starbridge/internal/contract"
 )
 
 const (
@@ -312,7 +314,7 @@ func identifier(value, label string) error {
 	return nil
 }
 
-// integral deliberately rejects floating-point types: protocol 1.0 is not an integer.
+// integral accepts exact JSON numbers and native integers, never rounded floats.
 func integral(value any) (int64, bool) {
 	switch v := value.(type) {
 	case int:
@@ -340,8 +342,7 @@ func integral(value any) (int64, bool) {
 			return int64(v), true
 		}
 	case json.Number:
-		n, err := strconv.ParseInt(string(v), 10, 64)
-		return n, err == nil
+		return contract.JSONInteger(v)
 	}
 	return 0, false
 }
@@ -627,7 +628,7 @@ func validateGuest(action string, params map[string]any) error {
 		for _, bound := range []struct {
 			key                    string
 			defaultValue, min, max int64
-		}{{"max_depth", 6, 0, 12}, {"max_nodes", 300, 1, 1000}, {"timeout_ms", 10000, 1000, 20000}} {
+		}{{"max_depth", contract.DefaultMaxDepth, 0, 12}, {"max_nodes", contract.DefaultMaxNodes, 1, 1000}, {"timeout_ms", contract.DefaultTimeoutMS, 1000, 20000}} {
 			value, exists := params[bound.key]
 			if !exists {
 				value = bound.defaultValue
@@ -644,11 +645,8 @@ func (b *Bridge) Guest(ctx context.Context, vm, action string, params map[string
 	if err := identifier(vm, "VM"); err != nil {
 		return nil, err
 	}
-	copied := make(map[string]any, len(params))
-	for key, value := range params {
-		copied[key] = value
-	}
-	if err := validateGuest(action, copied); err != nil {
+	copied, err := normalizeGuestParameters(action, params)
+	if err != nil {
 		return nil, err
 	}
 	request, err := json.Marshal(map[string]any{"action": action, "params": copied})

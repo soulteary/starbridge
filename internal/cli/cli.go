@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/soulteary/starbridge/internal/bridge"
+	"github.com/soulteary/starbridge/internal/contract"
 	"github.com/soulteary/starbridge/internal/mcpserver"
 	"github.com/soulteary/starbridge/internal/version"
 )
@@ -68,6 +69,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if cmd.area == "serve" {
 		if cmd.opts.DryRun {
 			err = invalid("serve cannot be combined with --dry-run.")
+		} else if _, configured := cmd.values["access-policy"]; configured {
+			err = runMCP(ctx, b, cmd)
 		} else {
 			err = mcpserver.Run(ctx, b, cmd.flags["allow-vm-write"])
 		}
@@ -276,10 +279,12 @@ func commandOptions(area, action string) (map[string]optionKind, bool, []string,
 	schema := map[string]optionKind{}
 	var required []string
 	if area == "doctor" {
+		schema["vm"] = stringOption
 		return schema, false, nil, nil
 	}
 	if area == "serve" {
 		schema["allow-vm-write"] = boolOption
+		schema["access-policy"] = stringOption
 		return schema, false, nil, nil
 	}
 	if area == "vm" {
@@ -347,7 +352,11 @@ func dispatch(ctx context.Context, c command, b *bridge.Bridge) (bridge.Result, 
 	var err error
 	switch c.area {
 	case "doctor":
-		data, err = b.Doctor(ctx)
+		if vm, present := c.values["vm"]; present {
+			data, err = b.DoctorVM(ctx, vm)
+		} else {
+			data, err = b.Doctor(ctx)
+		}
 	case "vm":
 		switch c.action {
 		case "list":
@@ -376,11 +385,11 @@ func dispatch(ctx context.Context, c command, b *bridge.Bridge) (bridge.Result, 
 		if c.action == "ui" {
 			action = "ui.tree"
 			params["hwnd"] = c.values["hwnd"]
-			params["max_depth"] = c.integer("max-depth", 6)
-			params["max_nodes"] = c.integer("max-nodes", 300)
-			params["timeout_ms"] = c.integer("timeout-ms", 10000)
+			params["max_depth"] = c.integer("max-depth", contract.DefaultMaxDepth)
+			params["max_nodes"] = c.integer("max-nodes", contract.DefaultMaxNodes)
+			params["timeout_ms"] = c.integer("timeout-ms", contract.DefaultTimeoutMS)
 		} else {
-			params["limit"] = c.integer("limit", 500)
+			params["limit"] = c.integer("limit", contract.DefaultListLimit)
 			if _, present := c.values["pid"]; present {
 				params["pid"] = c.integer("pid", 0)
 			}
@@ -464,9 +473,9 @@ max-nodes=300, timeout-ms=10000. UI inspection requires an interactive desktop.
 	}
 	switch c.area {
 	case "doctor":
-		return "Usage: starbridge [global options] doctor\n\nInspect the host CLI and report guest prerequisites without starting a VM.\n"
+		return "Usage: starbridge [global options] doctor [--vm VM]\n\nInspect the host CLI. With --vm, probe guest session, windows and one UI root.\nRead-only; never starts a VM. Inspect data.ready and checks for readiness.\n"
 	case "serve":
-		return "Usage: starbridge [global options] serve [--allow-vm-write]\n\nServe local MCP tools over stdio. VM mutations are disabled by default.\nCannot be combined with --dry-run. Diagnostics go to stderr.\n"
+		return "Usage: starbridge [global options] serve [--allow-vm-write] [--access-policy FILE]\n\nServe local MCP tools over stdio. VM mutations are disabled by default.\nOptional access policy limits VMs by UUID and tools by name.\nCannot be combined with --dry-run. Diagnostics go to stderr.\n"
 	case "vm":
 		usage := map[string]string{
 			"list": "list", "info": "info VM", "start": "start VM", "stop": "stop VM [--force] [--confirm VM]",
