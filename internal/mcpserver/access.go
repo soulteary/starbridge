@@ -87,6 +87,10 @@ func parseAccessPolicy(data []byte) (*AccessPolicy, error) {
 			known[definition.name] = true
 		}
 	}
+	known["doctor_vm"], known["vm_snapshot_list"] = true, true
+	for _, action := range bridge.DeveloperActions() {
+		known[developerToolName(action.Name)] = true
+	}
 	policy := &AccessPolicy{grants: map[string]map[string]bool{}}
 	for identifier, raw := range vms {
 		uuid, valid := canonicalAccessUUID(identifier)
@@ -114,11 +118,19 @@ func parseAccessPolicy(data []byte) (*AccessPolicy, error) {
 
 // LoadAccessPolicy reads a bounded, fail-closed JSON configuration before serving.
 func LoadAccessPolicy(path string) (*AccessPolicy, error) {
+	initial, err := os.Lstat(path)
+	if err != nil || !initial.Mode().IsRegular() || initial.Size() > maxAccessPolicyBytes {
+		return nil, invalidAccessPolicy("Access policy must be a regular JSON file within 64 KiB.")
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, invalidAccessPolicy("Could not read access policy JSON.")
 	}
 	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(initial, opened) || opened.Size() != initial.Size() || opened.ModTime() != initial.ModTime() {
+		return nil, invalidAccessPolicy("Access policy changed while being opened.")
+	}
 	data, err := io.ReadAll(io.LimitReader(file, maxAccessPolicyBytes+1))
 	if err != nil {
 		return nil, invalidAccessPolicy("Could not read access policy JSON.")
@@ -127,9 +139,10 @@ func LoadAccessPolicy(path string) (*AccessPolicy, error) {
 }
 
 type scopedBackend struct {
-	backend    Backend
-	policy     *AccessPolicy
-	allowWrite bool
+	backend         Backend
+	policy          *AccessPolicy
+	allowWrite      bool
+	allowGuestWrite bool
 }
 
 type accessVM struct {
@@ -286,22 +299,7 @@ func (b *scopedBackend) VMAction(ctx context.Context, action, vm string, force b
 // NewWithAccess adds an optional UUID/action policy without changing New's API.
 // VM write tools still require allowWrite, even if granted by the policy.
 func NewWithAccess(backend Backend, allowWrite bool, policy *AccessPolicy) *mcp.Server {
-	if policy == nil {
-		return New(backend, allowWrite)
-	}
-	server := New(&scopedBackend{backend: backend, policy: policy, allowWrite: allowWrite}, allowWrite)
-	for _, definition := range tools(allowWrite) {
-		if definition.name == "vm_list" {
-			continue
-		}
-		granted := false
-		for _, actions := range policy.grants {
-			granted = granted || actions[definition.name]
-		}
-		if !granted {
-			server.RemoveTools(definition.name)
-		}
-	}
+	server, _ := NewWithOptions(backend, ServerOptions{AllowVMWrite: allowWrite, AccessPolicy: policy})
 	return server
 }
 

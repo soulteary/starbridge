@@ -12,7 +12,9 @@
 
 `parameters.json` 直接包含参数对象，例如 `{}`，不包含 `action` 或 `params` 外层。省略 `--request` 相当于 `{}`。未知动作、参数或不符合类型的值会被拒绝；写动作必须显式加 `--allow-write`，Go API 和 Windows 入口也执行此检查。预演完成参数校验但不访问 VM；注册了脱敏函数的动作会在预演中隐藏敏感参数。
 
-`system.info` 返回 Windows 版本、系统与进程架构、PowerShell/.NET 版本、会话、已安装动作以及 helper 代码指纹。默认不返回用户名或目录。`capabilities` 表示安装了对应实现；具体动作仍可能因会话、权限、应用状态或配置而不可用。代码指纹覆盖入口和 `developer/` 下所有 `.ps1` 文件，包括 workers；它不是代码签名。
+`system.info` 返回 Windows 版本、系统与进程架构、PowerShell/.NET 版本、会话、已安装动作以及 helper 代码指纹。默认不返回用户名或目录。`capabilities` 表示安装了对应实现；具体动作仍可能因会话、权限、应用状态或配置而不可用。代码指纹覆盖入口和 `developer/` 下所有 `.ps1`、`.cs` 文件，包括 workers；它不是代码签名。
+
+通过 MCP 调用时显式开启 `serve --developer-tools`；独立写授权、动作策略及宿主工作目录见[MCP 开发工具](MCP_DEVELOPER.md)。
 
 ## 请求与响应
 
@@ -48,4 +50,4 @@ Register-DeveloperAction -Name 'example.inspect' -Handler {
 
 `Get-DevString $p name default max [-Required]` 按 Unicode 码点计长；缺失使用默认值，显式 null、错误类型或超长会拒绝。`-Required` 要求存在且非空。整数必须精确、有限并在范围内，布尔值不接受字符串或数字。`Assert-DevFields` 拒绝未知字段；`Get-DevField` 保留数组类型。模块返回一个对象，不自行输出 envelope；用 `Stop-Dev CODE MESSAGE` 返回稳定错误，避免把异常中的私密路径和环境值带给调用方。
 
-Windows 基础契约测试：`powershell.exe -NoProfile -File tests/windows/developer-contract.ps1`。它验证真实 PowerShell 子进程、语法、结构、默认值、数组、Unicode、代码指纹与写授权，使用合成模块，不依赖交互桌面；它不替代真实 VM 与桌面验收。
+在项目根目录的 PowerShell 会话中运行基础契约测试：`& .\tests\windows\developer-contract.ps1`。它验证真实 PowerShell 子进程、语法、结构、默认值、数组、Unicode、代码指纹与写授权，使用合成模块，不依赖交互桌面；它不替代真实 VM 与桌面验收。

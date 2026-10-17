@@ -14,7 +14,6 @@ import (
 
 	"github.com/soulteary/starbridge/internal/bridge"
 	"github.com/soulteary/starbridge/internal/contract"
-	"github.com/soulteary/starbridge/internal/mcpserver"
 	"github.com/soulteary/starbridge/internal/version"
 )
 
@@ -69,10 +68,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if cmd.area == "serve" {
 		if cmd.opts.DryRun {
 			err = invalid("serve cannot be combined with --dry-run.")
-		} else if _, configured := cmd.values["access-policy"]; configured {
-			err = runMCP(ctx, b, cmd)
 		} else {
-			err = mcpserver.Run(ctx, b, cmd.flags["allow-vm-write"])
+			err = runMCP(ctx, b, cmd)
 		}
 		if err != nil {
 			writeResult(stderr, bridge.Failure(err))
@@ -296,6 +293,9 @@ func commandOptions(area, action string) (map[string]optionKind, bool, []string,
 	}
 	if area == "serve" {
 		schema["allow-vm-write"] = boolOption
+		schema["developer-tools"] = boolOption
+		schema["allow-guest-write"] = boolOption
+		schema["developer-workspace"] = stringOption
 		schema["access-policy"] = stringOption
 		return schema, false, nil, nil
 	}
@@ -498,7 +498,7 @@ max-nodes=300, timeout-ms=10000. UI inspection requires an interactive desktop.
 	case "doctor":
 		return "Usage: starbridge [global options] doctor [--vm VM]\n\nInspect the host CLI. With --vm, probe guest session, windows and one UI root.\nRead-only; never starts a VM. Inspect data.ready and checks for readiness.\n"
 	case "serve":
-		return "Usage: starbridge [global options] serve [--allow-vm-write] [--access-policy FILE]\n\nServe local MCP tools over stdio. VM mutations are disabled by default.\nOptional access policy limits VMs by UUID and tools by name.\nCannot be combined with --dry-run. Diagnostics go to stderr.\n"
+		return "Usage: starbridge [global options] serve [--allow-vm-write] [--access-policy FILE]\n  [--developer-tools [--allow-guest-write] [--developer-workspace DIR]]\n\nServe MCP over stdio. VM and guest mutations require separate opt-ins.\nDevelopment tools and extended read options require --developer-tools.\nHost file actions require an explicit existing workspace directory.\nOptional access policy limits VMs by UUID and tools by name.\nCannot be combined with --dry-run. Diagnostics go to stderr.\n"
 	case "vm":
 		if c.action == "recycle" {
 			return "Usage: starbridge [global options] vm recycle VM [--policy FILE] [--mode stop|restore|delete] [--snapshot ID] [--confirm VM]\n\nWith --policy, VM and all policy vms keys must be UUIDs, not display names.\nUUID case and paired braces are normalized for matching; --confirm must repeat the original input exactly.\nDry runs stay offline. Without --policy, VM names remain supported.\n"
