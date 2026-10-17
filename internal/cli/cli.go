@@ -256,10 +256,12 @@ func parse(args []string) (command, error) {
 	if mode, found := c.values["mode"]; found && mode != "stop" && mode != "restore" && mode != "delete" {
 		return c, invalid("mode must be stop, restore or delete.")
 	}
-	// RecycleOptions uses an empty string to mean "no override". Preserve CLI
-	// presence here so an explicitly empty snapshot never selects a policy's
-	// existing snapshot or silently falls back to the default stop operation.
+	// RecycleOptions uses empty strings for omitted options. Preserve CLI
+	// presence so blank values cannot silently select another recycle operation.
 	if c.area == "vm" && c.action == "recycle" {
+		if policy, present := c.values["policy"]; present && strings.TrimSpace(policy) == "" {
+			return c, invalid("--policy requires a nonempty file path.")
+		}
 		if snapshot, present := c.values["snapshot"]; present && snapshot == "" {
 			return c, invalid("snapshot ID must be nonempty and cannot start with '-'.")
 		}

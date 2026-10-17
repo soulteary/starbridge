@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -579,8 +578,6 @@ func (b *Bridge) Recycle(ctx context.Context, vm string, options RecycleOptions)
 	return map[string]any{"vm": vm, "policy": policy, "policy_source": source, "result": result}, nil
 }
 
-var hwndPattern = regexp.MustCompile(`^(?:[0-9]+|0[xX][0-9a-fA-F]+)$`)
-
 func validateGuest(action string, params map[string]any) error {
 	allowed := map[string]map[string]bool{
 		"processes.list": {"pid": true, "name": true, "limit": true, "include_path": true},
@@ -620,17 +617,7 @@ func validateGuest(action string, params map[string]any) error {
 		}
 	}
 	if action == "ui.tree" {
-		hwnd, ok := params["hwnd"].(string)
-		valid := ok && hwndPattern.MatchString(hwnd)
-		if valid {
-			base, text := 10, hwnd
-			if strings.HasPrefix(strings.ToLower(hwnd), "0x") {
-				base, text = 16, hwnd[2:]
-			}
-			number, err := strconv.ParseUint(text, base, 63)
-			valid = err == nil && number > 0
-		}
-		if !valid {
+		if _, valid := parseHWND(params["hwnd"]); !valid {
 			return NewError("INVALID_ARGUMENT", "hwnd must be a positive decimal or hexadecimal string.", nil)
 		}
 		for _, bound := range []struct {

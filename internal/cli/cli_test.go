@@ -314,6 +314,96 @@ func TestRecycleInvalidSnapshotNeverReachesTransport(t *testing.T) {
 	}
 }
 
+func TestRecycleBlankPolicyNeverReachesTransport(t *testing.T) {
+	exe := helper(t, `{}`, 0)
+	for _, dryRun := range []bool{false, true} {
+		for _, tt := range []struct {
+			name string
+			args []string
+		}{
+			{"empty-value", []string{"vm", "--policy", ""}},
+			{"empty-equals", []string{"--policy=", "vm"}},
+			{"spaces", []string{"vm", "--policy", "   "}},
+			{"unicode-whitespace", []string{"--policy=\t\r\n\u2003", "vm"}},
+			{"with-mode-override", []string{"DisplayName", "--policy", "", "--mode", "delete", "--confirm", "DisplayName"}},
+			{"equals-with-mode-override", []string{"DisplayName", "--policy=", "--mode", "delete", "--confirm", "DisplayName"}},
+		} {
+			t.Run(fmt.Sprintf("%s/dry-run=%t", tt.name, dryRun), func(t *testing.T) {
+				marker := filepath.Join(t.TempDir(), "invoked")
+				t.Setenv("STARBRIDGE_CLI_TEST_MARKER", marker)
+				args := []string{"--prlctl", exe}
+				if dryRun {
+					args = append(args, "--dry-run")
+				}
+				args = append(args, "vm", "recycle")
+				status, result := invoke(t, append(args, tt.args...)...)
+				if status != 1 {
+					t.Fatalf("status=%d result=%#v", status, result)
+				}
+				assertCode(t, result, "INVALID_ARGUMENT")
+				if _, err := os.Stat(marker); !os.IsNotExist(err) {
+					t.Fatalf("blank policy reached transport: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestRecycleOmittedPolicyAndWhitespaceInPath(t *testing.T) {
+	exe := helper(t, "completed", 0)
+	const policyVM = "11111111-1111-4111-8111-111111111111"
+	policy := filepath.Join(t.TempDir(), " policy with spaces.json ")
+	if err := os.WriteFile(policy, []byte(`{"default":{"mode":"restore","snapshot":"clean"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, dryRun := range []bool{false, true} {
+		for _, tt := range []struct {
+			name, vm, policy, source, mode string
+			want                           []string
+		}{
+			{"omitted-policy", "vm", "", "built-in default", "stop", []string{"stop", "vm"}},
+			{"path-with-spaces", policyVM, policy, "policy default", "restore", []string{"snapshot-switch", policyVM, "--id", "clean", "--skip-resume"}},
+		} {
+			t.Run(fmt.Sprintf("%s/dry-run=%t", tt.name, dryRun), func(t *testing.T) {
+				marker := filepath.Join(t.TempDir(), "invoked")
+				t.Setenv("STARBRIDGE_CLI_TEST_MARKER", marker)
+				args := []string{"--prlctl", exe}
+				if dryRun {
+					args = append(args, "--dry-run")
+				}
+				args = append(args, "vm", "recycle", tt.vm, "--confirm", tt.vm)
+				if tt.policy != "" {
+					args = append(args, "--policy", tt.policy)
+				}
+				status, result := invoke(t, args...)
+				if status != 0 {
+					t.Fatalf("status=%d result=%#v", status, result)
+				}
+				data := resultData(t, result)
+				if data["policy_source"] != tt.source || data["policy"].(map[string]any)["mode"] != tt.mode {
+					t.Fatalf("unexpected policy: %#v", data)
+				}
+				nested := data["result"].(map[string]any)
+				if dryRun {
+					if argv := argumentVector(t, nested); !reflect.DeepEqual(argv[1:], tt.want) {
+						t.Fatalf("argv=%#v want=%#v", argv[1:], tt.want)
+					}
+					if _, err := os.Stat(marker); !os.IsNotExist(err) {
+						t.Fatalf("dry run reached transport: %v", err)
+					}
+				} else {
+					if nested["command_completed"] != true {
+						t.Fatalf("command not completed: %#v", nested)
+					}
+					if _, err := os.Stat(marker); err != nil {
+						t.Fatalf("expected fixture invocation: %v", err)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestGuestDispatchOptionsBeforeAndAfterVM(t *testing.T) {
 	cases := []struct {
 		args   []string
