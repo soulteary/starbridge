@@ -16,6 +16,27 @@ foreach($file in @('screenshot-native.ps1','screenshot-core.ps1','screenshot-cap
 . (Join-Path $workers 'screenshot-core.ps1')
 Initialize-DevScreenshotNative
 $checks=0
+# Both native capture and DWM geometry failures use the same safe mapping.
+# Wrapped synthetic exceptions exercise it without creating an oversized window
+# or querying any actual HWND. Unknown exceptions retain the caller's fallback.
+foreach($case in @(
+    @{code='WGC_GEOMETRY_UNAVAILABLE';fallback='SCREENSHOT_ENCODE_FAILED';expected='WGC_GEOMETRY_UNAVAILABLE'},
+    @{code='SCREENSHOT_PIXEL_LIMIT';fallback='WGC_GEOMETRY_UNAVAILABLE';expected='SCREENSHOT_PIXEL_LIMIT'},
+    @{code='WGC_ACCESS_DENIED';fallback='WGC_GEOMETRY_UNAVAILABLE';expected='WGC_ACCESS_DENIED'},
+    @{code='SCREENSHOT_ENCODE_FAILED';fallback='WGC_GEOMETRY_UNAVAILABLE';expected='SCREENSHOT_ENCODE_FAILED'},
+    @{code='synthetic-private-unknown';fallback='WGC_GEOMETRY_UNAVAILABLE';expected='WGC_GEOMETRY_UNAVAILABLE'},
+    @{code=$null;fallback='WGC_GEOMETRY_UNAVAILABLE';expected='WGC_GEOMETRY_UNAVAILABLE'},
+    @{code=$null;fallback='SCREENSHOT_ENCODE_FAILED';expected='SCREENSHOT_ENCODE_FAILED'}
+)){
+    if($null -eq $case.code){$nativeException=New-Object Exception('synthetic-private-failure')}
+    else{$nativeException=New-Object StarbridgeDeveloperScreenshot.CaptureException($case.code)}
+    $wrapped=New-Object Reflection.TargetInvocationException -ArgumentList $nativeException
+    $script:DevUiErrorCode='';$script:DevUiErrorMessage=''
+    try{Stop-DevScreenshotFailure $wrapped $case.fallback 'Synthetic safe fallback.';throw 'Screenshot failure mapping unexpectedly returned.'}
+    catch{
+        if($script:DevUiErrorCode -cne $case.expected -or $script:DevUiErrorMessage.Contains('synthetic-private')){throw 'Screenshot error mapping changed a known code or exposed a raw failure.'}
+    };$checks++
+}
 foreach($method in @('print_window','windows_graphics_capture')){
     $p=Resolve-DevScreenshotParameters ([PSCustomObject]@{hwnd='0x123';pid=42;start_time_utc='2026-01-02T03:04:05Z';capture_method=$method})
     if($p.capture_method -cne $method){throw 'Explicit screenshot backend was changed.'};$checks++

@@ -70,31 +70,7 @@ function Invoke-DevScreenshotCore($Parameters) {
             }else{
                 $png=[StarbridgeDeveloperScreenshot.Native]::Capture($handle,$before.width,$before.height,$Parameters.max_pixels,$Parameters.max_bytes)
             }
-        } catch {
-            $cause=$_.Exception
-            while($null -ne $cause.InnerException){$cause=$cause.InnerException}
-            if($cause -is [StarbridgeDeveloperScreenshot.CaptureException]) {
-                switch -CaseSensitive($cause.Code) {
-                    'SCREENSHOT_PIXEL_LIMIT'{Stop-DevUi 'SCREENSHOT_PIXEL_LIMIT' 'The window dimensions exceeded max_pixels or the 16384-pixel dimension limit.'}
-                    'SCREENSHOT_BYTE_LIMIT'{Stop-DevUi 'SCREENSHOT_BYTE_LIMIT' 'The rendered PNG exceeded max_bytes.'}
-                    'SCREENSHOT_RENDER_FAILED'{Stop-DevUi 'SCREENSHOT_RENDER_FAILED' 'The target application did not provide a window rendering.'}
-                    'SCREENSHOT_TIMEOUT'{Stop-DevUi 'SCREENSHOT_TIMEOUT' 'The screenshot exceeded timeout_ms.'}
-                    'WINDOW_GEOMETRY_CHANGED'{Stop-DevUi 'WINDOW_GEOMETRY_CHANGED' 'The window capture size changed; request a new observation.'}
-                    'WGC_OS_UNSUPPORTED'{Stop-DevUi $cause.Code 'Windows Graphics Capture requires Windows 10 build 18362 or later.'}
-                    'WGC_API_UNAVAILABLE'{Stop-DevUi $cause.Code 'The required Windows Graphics Capture interfaces are unavailable.'}
-                    'WGC_UNSUPPORTED'{Stop-DevUi $cause.Code 'Windows Graphics Capture is unsupported by this device or system policy.'}
-                    'WGC_ACCESS_DENIED'{Stop-DevUi $cause.Code 'Windows denied access to this window capture; no alternate backend was attempted.'}
-                    'WGC_WINDOW_UNSUPPORTED'{Stop-DevUi $cause.Code 'Windows Graphics Capture cannot capture this window.'}
-                    'WGC_WINDOW_EXCLUDED'{Stop-DevUi $cause.Code 'The target window excludes capture through its display-affinity policy.'}
-                    'WGC_DEVICE_UNAVAILABLE'{Stop-DevUi $cause.Code 'A hardware Direct3D 11 capture device is unavailable.'}
-                    'WGC_DEVICE_LOST'{Stop-DevUi $cause.Code 'The graphics device was removed or reset during capture.'}
-                    'WGC_FRAME_UNAVAILABLE'{Stop-DevUi $cause.Code 'Windows Graphics Capture could not provide a frame.'}
-                    'WGC_READBACK_FAILED'{Stop-DevUi $cause.Code 'The graphics frame could not be read within the capture budget.'}
-                    'WGC_INVALID_BUFFER'{Stop-DevUi $cause.Code 'The graphics frame did not have the expected bounded BGRA8 layout.'}
-                }
-            }
-            Stop-DevUi 'SCREENSHOT_ENCODE_FAILED' 'The window rendering could not be encoded within the capture budget.'
-        }
+        } catch { Stop-DevScreenshotFailure $_.Exception }
         $finished=[DateTime]::UtcNow
         $null=Assert-DevUiWindow $Parameters
         Assert-DevScreenshotContext $Parameters $handle
@@ -109,5 +85,33 @@ function Invoke-DevScreenshotCore($Parameters) {
 function Get-DevScreenshotRect($Parameters,[IntPtr]$Handle) {
     if($Parameters.capture_method -ceq 'print_window'){return [StarbridgeDeveloperInput.Native]::WindowRect($Handle)}
     try{return [StarbridgeDeveloperScreenshot.Wgc]::WindowRect($Handle)}
-    catch{Stop-DevUi 'WGC_GEOMETRY_UNAVAILABLE' 'The compositor window bounds are unavailable; no capture was attempted.'}
+    catch{Stop-DevScreenshotFailure $_.Exception 'WGC_GEOMETRY_UNAVAILABLE' 'The compositor window bounds are unavailable.'}
+}
+
+function Stop-DevScreenshotFailure([Exception]$Exception,[string]$FallbackCode='SCREENSHOT_ENCODE_FAILED',[string]$FallbackMessage='The window rendering could not be encoded within the capture budget.') {
+    $cause=$Exception
+    while($null -ne $cause.InnerException){$cause=$cause.InnerException}
+    if($cause -is [StarbridgeDeveloperScreenshot.CaptureException]) {
+        switch -CaseSensitive($cause.Code) {
+            'SCREENSHOT_PIXEL_LIMIT'{Stop-DevUi $cause.Code 'The window dimensions exceeded max_pixels or the 16384-pixel dimension limit.'}
+            'SCREENSHOT_BYTE_LIMIT'{Stop-DevUi $cause.Code 'The rendered PNG exceeded max_bytes.'}
+            'SCREENSHOT_RENDER_FAILED'{Stop-DevUi $cause.Code 'The target application did not provide a window rendering.'}
+            'SCREENSHOT_ENCODE_FAILED'{Stop-DevUi $cause.Code 'The window rendering could not be encoded within the capture budget.'}
+            'SCREENSHOT_TIMEOUT'{Stop-DevUi $cause.Code 'The screenshot exceeded timeout_ms.'}
+            'WINDOW_GEOMETRY_CHANGED'{Stop-DevUi $cause.Code 'The window capture size changed; request a new observation.'}
+            'WGC_GEOMETRY_UNAVAILABLE'{Stop-DevUi $cause.Code 'The compositor capture bounds or item dimensions are unavailable.'}
+            'WGC_OS_UNSUPPORTED'{Stop-DevUi $cause.Code 'Windows Graphics Capture requires Windows 10 build 18362 or later.'}
+            'WGC_API_UNAVAILABLE'{Stop-DevUi $cause.Code 'The required Windows Graphics Capture interfaces are unavailable.'}
+            'WGC_UNSUPPORTED'{Stop-DevUi $cause.Code 'Windows Graphics Capture is unsupported by this device or system policy.'}
+            'WGC_ACCESS_DENIED'{Stop-DevUi $cause.Code 'Windows denied access to this window capture; no alternate backend was attempted.'}
+            'WGC_WINDOW_UNSUPPORTED'{Stop-DevUi $cause.Code 'Windows Graphics Capture cannot capture this window.'}
+            'WGC_WINDOW_EXCLUDED'{Stop-DevUi $cause.Code 'The target window excludes capture through its display-affinity policy.'}
+            'WGC_DEVICE_UNAVAILABLE'{Stop-DevUi $cause.Code 'A hardware Direct3D 11 capture device is unavailable.'}
+            'WGC_DEVICE_LOST'{Stop-DevUi $cause.Code 'The graphics device was removed or reset during capture.'}
+            'WGC_FRAME_UNAVAILABLE'{Stop-DevUi $cause.Code 'Windows Graphics Capture could not provide a frame.'}
+            'WGC_READBACK_FAILED'{Stop-DevUi $cause.Code 'The graphics frame could not be read within the capture budget.'}
+            'WGC_INVALID_BUFFER'{Stop-DevUi $cause.Code 'The graphics frame did not have the expected bounded BGRA8 layout.'}
+        }
+    }
+    Stop-DevUi $FallbackCode $FallbackMessage
 }
