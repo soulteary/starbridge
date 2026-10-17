@@ -132,4 +132,64 @@ namespace Starbridge.Developer {
         }
         public void Dispose() {Close(ref job);Close(ref process);if(outputReader!=null)outputReader.Dispose();if(errorReader!=null)errorReader.Dispose();}
     }
+    // A short-lived transport must not own the worker's standard streams.
+    // Only these three NUL handles are inherited; transport pipes never cross.
+    public sealed class DetachedWorker : IDisposable {
+        [StructLayout(LayoutKind.Sequential)] struct SECURITY_ATTRIBUTES { public int length; public IntPtr descriptor; [MarshalAs(UnmanagedType.Bool)] public bool inherit; }
+        [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)] struct STARTUPINFO {
+            public int cb; public IntPtr reserved,desktop,title; public int x,y,xSize,ySize,xCount,yCount,fill,flags; public short show,reservedSize; public IntPtr reserved2,input,output,error;
+        }
+        [StructLayout(LayoutKind.Sequential)] struct STARTUPINFOEX { public STARTUPINFO startup; public IntPtr attributes; }
+        [StructLayout(LayoutKind.Sequential)] struct PROCESS_INFORMATION { public IntPtr process,thread; public uint pid,tid; }
+        [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateFile(string name,uint access,uint share,ref SECURITY_ATTRIBUTES attributes,uint creation,uint flags,IntPtr template);
+        [DllImport("kernel32.dll",SetLastError=true)] static extern bool InitializeProcThreadAttributeList(IntPtr list,int count,int flags,ref IntPtr size);
+        [DllImport("kernel32.dll",SetLastError=true)] static extern bool UpdateProcThreadAttribute(IntPtr list,uint flags,IntPtr attribute,IntPtr value,IntPtr size,IntPtr previous,IntPtr returned);
+        [DllImport("kernel32.dll")] static extern void DeleteProcThreadAttributeList(IntPtr list);
+        [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool CreateProcess(string application,StringBuilder command,IntPtr processAttributes,IntPtr threadAttributes,bool inherit,uint flags,IntPtr environment,string directory,ref STARTUPINFOEX startup,out PROCESS_INFORMATION process);
+        [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetProcessTimes(IntPtr process,out long created,out long exited,out long kernel,out long user);
+        [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool QueryFullProcessImageName(IntPtr process,int flags,StringBuilder name,ref int size);
+        [DllImport("kernel32.dll",SetLastError=true)] static extern uint ResumeThread(IntPtr thread);
+        [DllImport("kernel32.dll",SetLastError=true)] static extern bool TerminateProcess(IntPtr process,uint code);
+        [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+        IntPtr process,thread;
+        bool resumed;
+        public int Pid { get; private set; }
+        public long StartTimeTicks { get; private set; }
+        public string Executable { get; private set; }
+        static void Check(bool value) { if(!value)throw new Win32Exception(Marshal.GetLastWin32Error()); }
+        static void Close(IntPtr value) { if(value!=IntPtr.Zero && value!=new IntPtr(-1))CloseHandle(value); }
+        public void Start(string executable,string[] arguments,string directory) {
+            IntPtr input=IntPtr.Zero,output=IntPtr.Zero,error=IntPtr.Zero,list=IntPtr.Zero,handles=IntPtr.Zero;
+            bool initialized=false;
+            try {
+                SECURITY_ATTRIBUTES security=new SECURITY_ATTRIBUTES();security.length=Marshal.SizeOf(typeof(SECURITY_ATTRIBUTES));security.inherit=true;
+                input=CreateFile("NUL",0x80000000,3,ref security,3,0,IntPtr.Zero);if(input==new IntPtr(-1))throw new Win32Exception(Marshal.GetLastWin32Error());
+                output=CreateFile("NUL",0x40000000,3,ref security,3,0,IntPtr.Zero);if(output==new IntPtr(-1))throw new Win32Exception(Marshal.GetLastWin32Error());
+                error=CreateFile("NUL",0x40000000,3,ref security,3,0,IntPtr.Zero);if(error==new IntPtr(-1))throw new Win32Exception(Marshal.GetLastWin32Error());
+                IntPtr size=IntPtr.Zero;InitializeProcThreadAttributeList(IntPtr.Zero,1,0,ref size);
+                list=Marshal.AllocHGlobal(size);Check(InitializeProcThreadAttributeList(list,1,0,ref size));initialized=true;
+                handles=Marshal.AllocHGlobal(IntPtr.Size*3);Marshal.WriteIntPtr(handles,0,input);Marshal.WriteIntPtr(handles,IntPtr.Size,output);Marshal.WriteIntPtr(handles,IntPtr.Size*2,error);
+                Check(UpdateProcThreadAttribute(list,0,new IntPtr(0x20002),handles,new IntPtr(IntPtr.Size*3),IntPtr.Zero,IntPtr.Zero));
+                STARTUPINFOEX startup=new STARTUPINFOEX();startup.startup.cb=Marshal.SizeOf(typeof(STARTUPINFOEX));startup.startup.flags=0x100|1;startup.startup.show=0;startup.startup.input=input;startup.startup.output=output;startup.startup.error=error;startup.attributes=list;
+                StringBuilder command=new StringBuilder(TaskProcess.QuoteArgument(executable));foreach(string arg in arguments)command.Append(' ').Append(TaskProcess.QuoteArgument(arg));
+                PROCESS_INFORMATION information;
+                // Suspend until the caller has durably recorded the worker identity.
+                Check(CreateProcess(executable,command,IntPtr.Zero,IntPtr.Zero,true,0x4|0x80000|0x8000000,IntPtr.Zero,directory,ref startup,out information));
+                process=information.process;thread=information.thread;Pid=(int)information.pid;
+                long created,exited,kernel,user;Check(GetProcessTimes(process,out created,out exited,out kernel,out user));StartTimeTicks=DateTime.FromFileTimeUtc(created).Ticks;
+                StringBuilder image=new StringBuilder(32768);int length=image.Capacity;Check(QueryFullProcessImageName(process,0,image,ref length));Executable=image.ToString();
+            } catch {Dispose();throw;}
+            finally {Close(input);Close(output);Close(error);if(initialized)DeleteProcThreadAttributeList(list);if(list!=IntPtr.Zero)Marshal.FreeHGlobal(list);if(handles!=IntPtr.Zero)Marshal.FreeHGlobal(handles);}
+        }
+        public void Resume() {
+            if(ResumeThread(thread)==UInt32.MaxValue)throw new Win32Exception(Marshal.GetLastWin32Error());
+            resumed=true;Close(thread);thread=IntPtr.Zero;
+        }
+        public void Dispose() {
+            // Failed receipt creation must not strand an unowned suspended worker.
+            if(!resumed && process!=IntPtr.Zero)TerminateProcess(process,1);
+            Close(thread);thread=IntPtr.Zero;Close(process);process=IntPtr.Zero;
+        }
+    }
+
 }
