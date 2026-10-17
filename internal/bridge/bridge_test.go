@@ -263,7 +263,7 @@ func TestValidation(t *testing.T) {
 func TestGuestRequestEncodingAndPath(t *testing.T) {
 	f := newFixture(t)
 	f.bridge.options.GuestScript = `C:\Program Files\桌面助手\desktop bridge.ps1`
-	f.response.stdout = `{"ok":true,"data":[{"name":"程序","pid":42}],"meta":{"protocol_version":"1","action":"processes.list","session_id":1,"user_interactive":true}}`
+	f.response.stdout = `{"ok":true,"data":{"processes":[{"name":"程序","pid":42}],"limit":17,"truncated":false},"meta":{"protocol_version":"1","action":"processes.list","session_id":1,"user_interactive":true}}`
 	params := map[string]any{"name": "程序 名称 ; $(x)", "limit": 17, "include_path": true}
 	result, err := f.bridge.Guest(context.Background(), "Windows 空格", "processes.list", params)
 	if err != nil {
@@ -298,7 +298,7 @@ func TestGuestEnvelopesAndTransportFailures(t *testing.T) {
 		code    string
 	}{
 		{`{"ok":false,"error":{"code":"UI_TIMEOUT","message":"窗口不可用"}}`, 1, ""},
-		{`{"ok":true,"data":[]}`, 1, "GUEST_EXIT_MISMATCH"},
+		{`{"ok":true,"data":{}}`, 1, "GUEST_EXIT_MISMATCH"},
 		{`[]`, 0, "INVALID_GUEST_RESPONSE"},
 		{`{"ok":1,"data":[]}`, 0, "INVALID_GUEST_RESPONSE"},
 		{`{"ok":true}`, 0, "INVALID_GUEST_RESPONSE"},
@@ -342,7 +342,7 @@ func TestGuestProtocolAndSessionMetadata(t *testing.T) {
 	}
 	for _, metadata := range invalid {
 		f := newFixture(t)
-		payload, _ := json.Marshal(map[string]any{"ok": true, "data": []any{}, "meta": metadata})
+		payload, _ := json.Marshal(map[string]any{"ok": true, "data": validGuestData("processes.list"), "meta": metadata})
 		f.response.stdout = string(payload)
 		_, err := f.bridge.Guest(context.Background(), "vm", "processes.list", nil)
 		checkCode(t, err, "GUEST_PROTOCOL_MISMATCH")
@@ -351,7 +351,7 @@ func TestGuestProtocolAndSessionMetadata(t *testing.T) {
 		for _, session := range []int{0, 1} {
 			for _, interactive := range []bool{false, true} {
 				f := newFixture(t)
-				payload, _ := json.Marshal(map[string]any{"ok": true, "data": []any{}, "meta": map[string]any{"protocol_version": "1", "action": action, "session_id": session, "user_interactive": interactive}})
+				payload, _ := json.Marshal(map[string]any{"ok": true, "data": validGuestData(action), "meta": map[string]any{"protocol_version": "1", "action": action, "session_id": session, "user_interactive": interactive}})
 				f.response.stdout = string(payload)
 				params := map[string]any{}
 				if action == "ui.tree" {
