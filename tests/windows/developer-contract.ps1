@@ -33,10 +33,12 @@ function Invoke-DevContract([string]$Json, [string]$Code = '', [bool]$Write = $f
     }
     if ([string]::IsNullOrEmpty($response.meta.timestamp) -or ($response.meta.duration_ms -lt 0)) { throw 'Invalid observation metadata.' }
     if ($Code -eq '') {
-        if (($exitCode -ne 0) -or !$response.ok -or ($null -eq $response.PSObject.Properties['data']) -or ($null -ne $response.PSObject.Properties['error'])) { throw 'Expected developer success envelope and exit 0.' }
+        if (($exitCode -ne 0) -or !$response.ok -or ($null -eq $response.PSObject.Properties['data']) -or ($null -ne $response.PSObject.Properties['error'])) {
+            throw ('Expected developer success; code={0}, type={1}, parameter={2}, source_file={3}, source_line={4}.' -f $response.error.code, $response.error.diagnostic.exception_type, $response.error.diagnostic.parameter, $response.error.diagnostic.source_file, $response.error.diagnostic.source_line)
+        }
     } else {
         if (($exitCode -ne 1) -or $response.ok -or ($response.error.code -cne $Code) -or [string]::IsNullOrEmpty($response.error.message) -or ($null -ne $response.PSObject.Properties['data'])) {
-            throw ('Expected ' + $Code + '; got: ' + [string]$output[0])
+            throw ('Expected {0}; received error code {1}.' -f $Code, $response.error.code)
         }
     }
     $script:Checks++
@@ -72,7 +74,9 @@ Register-DeveloperAction -Name 'contract.write' -Handler { param($p); Assert-Dev
     if ($json.Contains($temporary) -or ($null -ne $info.meta.PSObject.Properties['user'])) { throw 'Environment response disclosed a private path or username field.' }
     $again = Invoke-DevContract '{"action":"system.info"}'
     if ($again.data.helper.sha256 -cne $info.data.helper.sha256) { throw 'Unchanged installed code must have a stable identity.' }
-    Add-Content -LiteralPath (Join-Path $temporary 'developer\contract.ps1') -Value '# Changed fixture code.' -Encoding UTF8
+    # A here-string does not retain its closing newline. Keep the comment on a
+    # new line so it cannot become part of the final switch argument.
+    Add-Content -LiteralPath (Join-Path $temporary 'developer\contract.ps1') -Value ([Environment]::NewLine + '# Changed fixture code.') -Encoding UTF8
     $changed = Invoke-DevContract '{"action":"system.info"}'
     if ($changed.data.helper.sha256 -ceq $info.data.helper.sha256) { throw 'Code identity did not cover installed action modules.' }
     $read = Invoke-DevContract '{"action":"contract.read","params":{}}'
@@ -105,3 +109,5 @@ Register-DeveloperAction -Name 'contract.write' -Handler { param($p); Assert-Dev
 } finally {
     Remove-Item -LiteralPath $temporary -Recurse -Force
 }
+# Expected negative child-process cases must not become this script's exit code.
+exit 0
