@@ -298,6 +298,7 @@ function Visit-DevUiQueryNode($Element, $ParentId, [int]$Depth, [object[]]$Ances
     }
     if ($ancestorMatch -and (Test-DevUiSelector $info $script:DevUiOptions.selector)) {
         $script:DevUiMatched++
+        if ($script:DevUiMatched -eq 1) { $script:DevUiFirstMatch = $Element }
         if (($script:DevUiMatched -gt $script:DevUiOptions.offset) -and ($script:DevUiItems.Count -lt $script:DevUiOptions.limit)) {
             $script:DevUiItems.Add((Get-DevUiItem $Element $info $nodeId $ParentId $Depth))
         }
@@ -330,6 +331,7 @@ function Invoke-DevUiQueryCore($Parameters) {
     Add-Type -AssemblyName UIAutomationTypes
     Add-Type -AssemblyName WindowsBase
     $script:DevUiOptions = $Parameters
+    $script:DevUiFirstMatch = $null
     $script:DevUiScanned = 0; $script:DevUiMatched = 0
     $script:DevUiComplete = $true; $script:DevUiNodeLimit = $false; $script:DevUiDepthLimit = $false
     $script:DevUiItems = New-Object 'Collections.Generic.List[object]'
