@@ -157,7 +157,9 @@ try {
     Write-DevResponse ([ordered]@{ ok=$true; data=$data; meta=(New-DevMetadata) })
     exit 0
 } catch {
-    $diagnostic = [ordered]@{ exception_type=$_.Exception.GetType().Name; source_line=$_.InvocationInfo.ScriptLineNumber }
+    $sourceFile = [IO.Path]::GetFileName($_.InvocationInfo.ScriptName)
+    if ($sourceFile -notmatch '^[a-zA-Z0-9_-]+\.ps1$') { $sourceFile = '[module]' }
+    $diagnostic = [ordered]@{ exception_type=$_.Exception.GetType().Name; source_file=$sourceFile; source_line=$_.InvocationInfo.ScriptLineNumber }
     Write-DevResponse ([ordered]@{
         ok=$false
         error=[ordered]@{ code=$script:DevFailureCode; message=$script:DevFailureMessage; diagnostic=$diagnostic }
