@@ -89,6 +89,8 @@ Copy-Item .\guest\windows\desktop-bridge.ps1 C:\ProgramData\Starbridge\desktop-b
 
 复制并修改[回收策略示例](../examples/recycle-policy.json)，将示例 VM / 快照 UUID 改为实际值。优先级为：命令行覆盖 > VM 专属策略 > 文件默认策略 > 内置 `stop`。
 
+省略 `--policy` 时仍使用内置 `stop`。显式传入 `--policy ''`、`--policy=` 或全空白路径会返回 `INVALID_ARGUMENT`，不会执行 VM 命令，预演模式也遵循此规则。有效路径中的空格会原样保留。
+
 ```sh
 ./bin/starbridge --dry-run vm recycle VM-UUID --policy examples/recycle-policy.json
 ./bin/starbridge vm recycle VM-UUID --policy examples/recycle-policy.json --confirm VM-UUID
