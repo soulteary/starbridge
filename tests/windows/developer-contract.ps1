@@ -34,7 +34,7 @@ function Invoke-DevContract([string]$Json, [string]$Code = '', [bool]$Write = $f
     if ([string]::IsNullOrEmpty($response.meta.timestamp) -or ($response.meta.duration_ms -lt 0)) { throw 'Invalid observation metadata.' }
     if ($Code -eq '') {
         if (($exitCode -ne 0) -or !$response.ok -or ($null -eq $response.PSObject.Properties['data']) -or ($null -ne $response.PSObject.Properties['error'])) {
-            throw ('Expected developer success; code={0}, type={1}, source_file={2}, source_line={3}.' -f $response.error.code, $response.error.diagnostic.exception_type, $response.error.diagnostic.source_file, $response.error.diagnostic.source_line)
+            throw ('Expected developer success; code={0}, type={1}, parameter={2}, source_file={3}, source_line={4}.' -f $response.error.code, $response.error.diagnostic.exception_type, $response.error.diagnostic.parameter, $response.error.diagnostic.source_file, $response.error.diagnostic.source_line)
         }
     } else {
         if (($exitCode -ne 1) -or $response.ok -or ($response.error.code -cne $Code) -or [string]::IsNullOrEmpty($response.error.message) -or ($null -ne $response.PSObject.Properties['data'])) {

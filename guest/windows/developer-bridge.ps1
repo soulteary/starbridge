@@ -159,7 +159,10 @@ try {
 } catch {
     $sourceFile = [IO.Path]::GetFileName($_.InvocationInfo.ScriptName)
     if ($sourceFile -notmatch '^[a-zA-Z0-9_-]+\.ps1$') { $sourceFile = '[module]' }
-    $diagnostic = [ordered]@{ exception_type=$_.Exception.GetType().Name; source_file=$sourceFile; source_line=$_.InvocationInfo.ScriptLineNumber }
+    $parameterName = ''
+    $parameterProperty = $_.Exception.PSObject.Properties['ParameterName']
+    if ($null -ne $parameterProperty -and [string]$parameterProperty.Value -match '^[a-zA-Z_]{1,64}$') { $parameterName = [string]$parameterProperty.Value }
+    $diagnostic = [ordered]@{ exception_type=$_.Exception.GetType().Name; parameter=$parameterName; source_file=$sourceFile; source_line=$_.InvocationInfo.ScriptLineNumber }
     Write-DevResponse ([ordered]@{
         ok=$false
         error=[ordered]@{ code=$script:DevFailureCode; message=$script:DevFailureMessage; diagnostic=$diagnostic }
