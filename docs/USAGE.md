@@ -1,11 +1,11 @@
 # 安装与使用
 
-[返回项目首页](../README.md) · [架构与能力边界](ARCHITECTURE.md) · [验证记录与验收](ACCEPTANCE.md)
+[返回项目首页](../README.md) · [架构](ARCHITECTURE.md) · [验收指南](ACCEPTANCE.md)
 
 ## 环境要求与构建
 
-1. 构建需要满足 [go.mod](../go.mod) 要求的 Go 工具链；运行构建后的宿主二进制不需要 Python 或 Go 工具链。
-2. Parallels 后端运行于 macOS，需要支持 CLI 的 Parallels Desktop 版本与授权。官方文档面向 Pro / Business / Enterprise；不能假设 Standard 可用。
+1. 从源码构建需要满足 [go.mod](../go.mod) 要求的 Go 工具链；安装包中的二进制可直接运行。
+2. 宿主运行于 macOS，需要支持 CLI 的 Parallels Desktop 版本与授权。
 3. 查询 Windows 时，需要安装 Parallels Tools 的 Windows VM，以及 Windows PowerShell 5.1。
 4. 查询窗口和控件时，Windows 中需要已有登录用户；`--current-user` 是否能访问目标桌面，需按[验收步骤](ACCEPTANCE.md)现场验证。
 
@@ -19,17 +19,15 @@ go build -o bin/starbridge ./cmd/starbridge
 ./bin/starbridge --dry-run vm start "Windows 11"
 ```
 
-开发时可用 `go run ./cmd/starbridge` 替代 `./bin/starbridge`。以下示例假定仍在项目根目录，使用已构建的二进制。
+以下示例在源码根目录使用 `./bin/starbridge`；开发时可替换为 `go run ./cmd/starbridge`。使用安装包时，在解压目录以 `./starbridge` 替换下文的 `./bin/starbridge`。
 
-`doctor` 仅检查宿主 CLI 版本并说明 guest 要求，不把未连接的 Windows 报告为已就绪。
+`doctor` 检查宿主 CLI；`doctor --vm VM-UUID` 还会检查 VM、guest 会话、窗口与一个 UIA 根节点，不会启动 VM。诊断结果以 `data.ready` 和 `data.checks` 为准，详见[桌面诊断](DESKTOP_TESTING.md#经-parallels-对照同一窗口)。
 
 CLI 路径按以下优先级选择：`--prlctl` > `STARBRIDGE_PRLCTL` > 兼容变量 `PRLBRIDGE_PRLCTL` > Parallels App 内的 CLI > `PATH`。旧环境变量继续兼容；新配置建议使用 `STARBRIDGE_PRLCTL`。
 
-MCP 服务已包含在同一个二进制中，使用官方 [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk)，无需另行安装运行时依赖。Windows helper 随仓库源码提供，需手动复制到 Windows。
-
 ## 安装 Windows helper
 
-从本仓库源码获取 `guest/windows/desktop-bridge.ps1`，复制到 Windows 的 `C:\ProgramData\Starbridge\desktop-bridge.ps1`。在 Windows PowerShell 中，从已经复制到 Windows 的项目目录执行：
+将源码或安装包中的 `guest/windows/desktop-bridge.ps1` 复制到 Windows。在已复制的目录中用 Windows PowerShell 执行：
 
 ```powershell
 New-Item -ItemType Directory -Force C:\ProgramData\Starbridge | Out-Null
@@ -38,7 +36,7 @@ Copy-Item .\guest\windows\desktop-bridge.ps1 C:\ProgramData\Starbridge\desktop-b
 
 也可安装到自定义目录，在宿主通过 `--guest-script 'C:\Users\you\Starbridge\desktop-bridge.ps1'` 指定。脚本使用进程级 `-ExecutionPolicy Bypass`，不修改系统执行策略。
 
-协议、会话诊断与参数说明见 [Windows helper](../guest/windows/README.md)。已有原型安装若仍使用旧目录，应复制到新目录，或通过 `--guest-script` 指定原路径。
+协议、会话诊断与参数说明见 [Windows helper](../guest/windows/README.md)。
 
 ## 管理虚拟机
 
@@ -69,13 +67,13 @@ Copy-Item .\guest\windows\desktop-bridge.ps1 C:\ProgramData\Starbridge\desktop-b
 ./bin/starbridge guest ui VM-UUID --hwnd 0x123456 --max-depth 6 --max-nodes 300
 ```
 
-列表默认上限统一为 500，控件树默认深度 6、节点 300、worker 超时 10000 毫秒。MCP 与 bridge 的 JSON 参数按精确数值接受 `12.0`、`1.2e1` 等整数写法，拒绝非整数与越界值，发送给 helper 前统一为普通整数。名称长度按 Unicode 码点计数；emoji 等补充平面字符计为一个字符。
+进程和窗口列表默认上限为 500；控件树默认深度 6、节点上限 300、worker 超时 10000 毫秒。完整参数范围与字段见 [helper 协议](../guest/windows/README.md)。
 
-HWND 接受 ASCII 十进制字符串或带 `0x` / `0X` 前缀的十六进制字符串，数值范围为 `1`–`0x7fffffffffffffff`。输入可带前导零；宿主发送给 helper 前会统一为无前导零的小写十六进制字符串，例如 `000000000000000000001` 转为 `0x1`。
+HWND 接受正的十进制字符串或带 `0x` / `0X` 前缀的十六进制字符串。
 
 先查询进程和窗口，再使用新取得的 HWND 读取控件树。HWND、PID 和 UIA RuntimeId 都可能失效或被复用，不能当作永久标识。
 
-成功结果包含 `ok:true` 与 `data`；失败结果包含 `ok:false` 与 `error`，退出码为 `1`。guest 响应通过 `meta` 标明协议、会话、采样时间及坐标系。`--help` 与 `--version` 使用普通文本。
+CLI 成功返回 `ok:true` 与 `data`；失败返回 `ok:false` 与 `error`，退出码为 `1`。guest 的 `meta` 包含协议、会话、采样时间及坐标系。`--help` 与 `--version` 使用普通文本。
 
 宿主 `--timeout` 范围为 1–600 秒，默认 30 秒。stdout 最多保留 8 MiB，超过后终止宿主等待并返回 `OUTPUT_LIMIT_EXCEEDED`。超时、取消或输出超限可能发生在 VM 操作已经开始之后；副作用操作的错误详情会标明 `outcome:unknown`，应先查询实际状态，避免直接重试。
 
@@ -89,9 +87,9 @@ HWND 接受 ASCII 十进制字符串或带 `0x` / `0X` 前缀的十六进制字�
 ./bin/starbridge vm recycle VM-UUID
 ```
 
-复制并修改[回收策略示例](../examples/recycle-policy.json)，将示例 VM / 快照 UUID 改为实际值。优先级为：命令行覆盖 > VM 专属策略 > 文件默认策略 > 内置 `stop`。
+复制[回收策略示例](../examples/recycle-policy.json)，将文件中所有 VM 和快照 UUID 占位值替换为实际值。优先级为：命令行覆盖 > VM 专属策略 > 文件默认策略 > 内置 `stop`。
 
-省略 `--policy` 时仍使用内置 `stop`。显式传入 `--policy ''`、`--policy=` 或全空白路径会返回 `INVALID_ARGUMENT`，不会执行 VM 命令，预演模式也遵循此规则。有效路径中的空格会原样保留。
+`--policy` 需要非空文件路径；空字符串或全空白路径会返回 `INVALID_ARGUMENT`，预演模式也遵循此规则。
 
 ```sh
 ./bin/starbridge --dry-run vm recycle VM-UUID --policy examples/recycle-policy.json
@@ -106,7 +104,7 @@ HWND 接受 ASCII 十进制字符串或带 `0x` / `0X` 前缀的十六进制字�
 
 实际执行恢复、删除或强制断电时，需要用 `--confirm` 重复相同 VM 标识；预演无需确认。策略执行失败即返回错误，不自动升级为强制停止或删除。快照不会回滚宿主共享文件、网络或外部服务的变化。
 
-使用 `recycle --policy` 时，目标和文件中所有 `vms` 键都必须是 VM UUID，不能使用名称。先通过 `vm list` 获取 UUID；大小写和成对大括号在策略匹配时视为同一 UUID，重复的规范化 UUID 会使整个策略文件被拒绝。执行与 `--confirm` 仍保留原始输入并要求完全相同。此限制也适用于 `--mode` 覆盖和预演，以防名称漏匹配专属策略后落入删除默认策略。预演不会查询 Parallels；未提供策略文件时仍可使用 VM 名称。
+提供 `--policy` 时，目标和文件中所有 `vms` 键必须是 VM UUID，此要求也适用于 `--mode` 覆盖和预演。UUID 大小写与成对大括号不影响匹配，重复 JSON 字段或重复 UUID 会使文件被拒绝；`--confirm` 仍须与原始输入完全相同。未提供策略文件时可使用 VM 名称，预演始终不查询 Parallels。
 
 也可以直接运行快照恢复与删除命令：
 
@@ -123,19 +121,17 @@ Codex 等本地客户端可以调用 CLI，也可以配置 stdio MCP。构建二
 codex mcp add starbridge -- /absolute/project/bin/starbridge serve
 ```
 
-所有 MCP 工具声明统一的输出信封 schema：成功为 `ok:true` 与 `data`，失败为 `ok:false` 与非空 `error.code`、`error.message`，两者互斥。数据结构允许兼容性新增字段；guest 返回值另由宿主按具体动作验证，非法响应返回 `INVALID_GUEST_RESPONSE`。
-
 默认提供 `vm_list`、`vm_info`、`guest_processes`、`guest_windows`、`guest_ui_tree`。如需向客户端提供启动、关机、挂起和恢复工具，将启动参数改为：
 
 ```sh
 /absolute/project/bin/starbridge serve --allow-vm-write
 ```
 
-配置示例见 [Codex MCP](../examples/codex-mcp.toml)。本版不通过 MCP 暴露删除、快照恢复或任意 shell。
+配置示例见 [Codex MCP](../examples/codex-mcp.toml)。MCP 结果沿用上述 JSON 信封；工具错误同时标记 `isError`。本版不通过 MCP 暴露删除、快照恢复或任意 shell。
 
 同一 MCP 服务最多并行执行 4 个后端调用，生命周期写操作按目标协调；排队请求支持取消。名称与 UUID 别名、CLI 进程边界详见 [MCP 并发与取消](MCP_CONCURRENCY.md)。
 
-ChatGPT 接入取决于所用环境是否能启动本地 stdio 工具；普通网页聊天不能直接访问 Mac 上的本地进程。当前没有实现远程 HTTP 接入、鉴权或发布插件。
+ChatGPT 接入需要所用环境支持本地 stdio 工具；普通网页聊天不能直接访问 Mac 上的本地进程。当前服务仅提供本地 stdio 接口。
 
 需要限制 MCP 可访问的 VM 与动作时，可使用 `serve --access-policy FILE`。策略按 UUID 授权，并对名称先解析再执行；详见 [MCP 的 VM 与动作授权](MCP_ACCESS.md)。
 
