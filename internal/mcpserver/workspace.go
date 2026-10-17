@@ -299,7 +299,7 @@ func (w *developerWorkspace) validate(options ServerOptions, action string, p ma
 			break
 		}
 		var grants []string
-		grants, err = w.workflow(options, p["profile_file"].(string), vm, depth+1)
+		grants, err = w.workflow(options, p["profile_file"].(string), vm, depth+1, action == "workflow.cleanup")
 		permissions = append(permissions, grants...)
 	default:
 		err = workspaceDenied()
@@ -341,7 +341,7 @@ func onlyFields(object map[string]any, fields ...string) bool {
 	return true
 }
 
-func (w *developerWorkspace) workflow(options ServerOptions, path, vm string, depth int) ([]string, error) {
+func (w *developerWorkspace) workflow(options ServerOptions, path, vm string, depth int, cleanupOnly bool) ([]string, error) {
 	profile, err := readWorkspaceJSON(path)
 	if err != nil {
 		return nil, err
@@ -372,7 +372,11 @@ func (w *developerWorkspace) workflow(options ServerOptions, path, vm string, de
 	if !ok || len(steps) < 1 || len(steps) > 32 {
 		return nil, workspaceDenied()
 	}
-	if cleanup, present := profile["cleanup"]; present && cleanup != nil {
+	cleanup, hasCleanup := profile["cleanup"]
+	if cleanupOnly && (!hasCleanup || cleanup == nil) {
+		return nil, workspaceDenied()
+	}
+	if hasCleanup && cleanup != nil {
 		object, ok := cleanup.(map[string]any)
 		if !ok || object["action"] != "vm.recycle" {
 			return nil, accessDenied()
@@ -397,6 +401,16 @@ func (w *developerWorkspace) workflow(options ServerOptions, path, vm string, de
 		action, ok := step["action"].(string)
 		if !ok || strings.HasPrefix(action, "workflow.") {
 			return nil, accessDenied()
+		}
+		if cleanupOnly && index < len(profile["steps"].([]any)) {
+			// Retain structural checks, but these stages are not executed during
+			// cleanup and must not require their grants or filesystem access.
+			if raw, present := step["params"]; present && raw != nil {
+				if _, ok := raw.(map[string]any); !ok {
+					return nil, workspaceDenied()
+				}
+			}
+			continue
 		}
 		params, ok := optionalParams(step)
 		if !ok {

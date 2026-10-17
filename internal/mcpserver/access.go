@@ -118,11 +118,19 @@ func parseAccessPolicy(data []byte) (*AccessPolicy, error) {
 
 // LoadAccessPolicy reads a bounded, fail-closed JSON configuration before serving.
 func LoadAccessPolicy(path string) (*AccessPolicy, error) {
+	initial, err := os.Lstat(path)
+	if err != nil || !initial.Mode().IsRegular() || initial.Size() > maxAccessPolicyBytes {
+		return nil, invalidAccessPolicy("Access policy must be a regular JSON file within 64 KiB.")
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, invalidAccessPolicy("Could not read access policy JSON.")
 	}
 	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(initial, opened) || opened.Size() != initial.Size() || opened.ModTime() != initial.ModTime() {
+		return nil, invalidAccessPolicy("Access policy changed while being opened.")
+	}
 	data, err := io.ReadAll(io.LimitReader(file, maxAccessPolicyBytes+1))
 	if err != nil {
 		return nil, invalidAccessPolicy("Could not read access policy JSON.")

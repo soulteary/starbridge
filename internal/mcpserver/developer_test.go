@@ -408,6 +408,33 @@ func TestDeveloperPolicyPreservesUUIDAndOptionalInterfaces(t *testing.T) {
 	}
 }
 
+func TestWorkflowCleanupRequiresOnlyItsExecutedActions(t *testing.T) {
+	root := t.TempDir()
+	profile := workflowFixture(t, root, map[string]any{"name": "upload", "action": "files.upload", "params": map[string]any{"local_path": filepath.Join(t.TempDir(), "unexecuted.bin")}}, map[string]any{"cleanup": map[string]any{"action": "vm.recycle", "params": map[string]any{"mode": "stop"}}})
+	for _, grantStop := range []bool{false, true} {
+		options := devOptions(root)
+		options.AllowVMWrite = true
+		grants := map[string]bool{"dev.workflow.cleanup": true}
+		if grantStop {
+			grants["vm_stop"] = true
+		}
+		options.AccessPolicy = &AccessPolicy{grants: map[string]map[string]bool{accessUUIDA: grants}}
+		f := &developerFixture{}
+		session, ctx := connectDeveloper(t, f, options)
+		payload := envelope(t, call(t, session, ctx, "dev.workflow.cleanup", devArgs(accessUUIDA, workflowRequest(profile, filepath.Join(root, "runs")))))
+		if grantStop {
+			if payload["ok"] != true || f.calls != 1 || f.action != "workflow.cleanup" {
+				t.Fatal("authorized cleanup required an unexecuted stage", payload)
+			}
+		} else {
+			requireCode(t, payload, "ACCESS_DENIED")
+			if f.calls != 0 {
+				t.Fatal("cleanup bypassed its own stop grant")
+			}
+		}
+	}
+}
+
 func TestDeveloperMutationsSerializeWithVMLifecycleAndQueuedCancel(t *testing.T) {
 	f := &developerFixture{}
 	entered := make(chan struct{}, 2)
@@ -481,14 +508,21 @@ func TestWorkspaceProfilesRejectSpecialFilesBeforeOpening(t *testing.T) {
 	if err := exec.Command("mkfifo", fifo).Run(); err != nil {
 		t.Skip("mkfifo fixture unavailable")
 	}
-	done := make(chan error, 1)
-	go func() { _, err := readWorkspaceJSON(fifo); done <- err }()
-	select {
-	case err := <-done:
-		if err == nil {
-			t.Fatal("FIFO profile accepted")
-		}
-	case <-time.After(time.Second):
-		t.Fatal("profile reader blocked while opening FIFO")
+	for name, reader := range map[string]func() error{
+		"workspace-profile": func() error { _, err := readWorkspaceJSON(fifo); return err },
+		"access-policy":     func() error { _, err := LoadAccessPolicy(fifo); return err },
+	} {
+		t.Run(name, func(t *testing.T) {
+			done := make(chan error, 1)
+			go func() { done <- reader() }()
+			select {
+			case err := <-done:
+				if err == nil {
+					t.Fatal("FIFO profile accepted")
+				}
+			case <-time.After(time.Second):
+				t.Fatal("profile reader blocked while opening FIFO")
+			}
+		})
 	}
 }
