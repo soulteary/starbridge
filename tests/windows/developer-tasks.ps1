@@ -96,7 +96,7 @@ public class SyntheticTask {
    List<string> encoded=new List<string>();for(int i=2;i<args.Length;i++)encoded.Add(Convert.ToBase64String(Encoding.UTF8.GetBytes(args[i])));
    File.WriteAllLines(Path.Combine(directory,"arguments.txt"),encoded.ToArray());
    File.WriteAllText(Path.Combine(directory,"environment.txt"),Environment.GetEnvironmentVariable("STARBRIDGE_TEST_LABEL")??"");
-   Console.OutputEncoding=new UTF8Encoding(false);Console.Write("hello \u4e2d\u6587");Console.Error.Write("stderr fixture");return 7;
+   byte[] output=Encoding.UTF8.GetBytes("hello \u4e2d\u6587");using(Stream stream=Console.OpenStandardOutput()){stream.Write(output,0,output.Length);}Console.Error.Write("stderr fixture");return 7;
   }
   if(mode=="flood") {Console.Write(new string('x',65536));Console.Error.Write(new string('y',65536));return 0;}
   if(mode=="tree") {
@@ -116,6 +116,40 @@ public class SyntheticTask {
   $profiles[$name]=[ordered]@{executable=$fixture;cwd=$root;args=@($mode,$root);allowed_env=@('STARBRIDGE_TEST_LABEL');allow_extra_args=($name -ceq 'echo');timeout_ms=$budget;max_output_bytes=1024;interactive=($name -ceq 'gui');show_window=($name -ceq 'gui')}
  }
  [IO.File]::WriteAllText((Join-Path $root 'profiles.json'),(ConvertTo-Json -InputObject @{version=1;profiles=$profiles} -Depth 12),(New-Object Text.UTF8Encoding($false)))
+ $phase='synchronous worker bootstrap'
+ # Probe the real private worker while this test retains its pipes. This fixture
+ # distinguishes a script/bootstrap failure from detached transport lifetime.
+ $probeId=[Guid]::NewGuid().ToString('N');$probeDirectory=Join-Path (Join-Path $root 'tasks') $probeId
+ $null=New-Item -ItemType Directory -Path $probeDirectory -Force
+ $probeRequest=[ordered]@{task_id=$probeId;profile='flood';executable=$fixture;cwd=$root;args=@('flood',$root);env=@{};timeout_ms=30000;max_output_bytes=1024;show_window=$false}
+ $probeReceipt=[ordered]@{task_id=$probeId;profile='flood';created_at=[DateTime]::UtcNow.ToString('o')}
+ [IO.File]::WriteAllText((Join-Path $probeDirectory 'request.json'),(ConvertTo-Json -InputObject $probeRequest -Depth 12 -Compress),(New-Object Text.UTF8Encoding($false)))
+ [IO.File]::WriteAllText((Join-Path $probeDirectory 'receipt.json'),(ConvertTo-Json -InputObject $probeReceipt -Depth 12 -Compress),(New-Object Text.UTF8Encoding($false)))
+ $probeWorker=Join-Path (Split-Path -Parent $helper) 'developer\workers\task-worker.ps1'
+ Assert-TaskTest (Test-Path -LiteralPath $probeWorker -PathType Leaf) 'Worker fixture file is missing.'
+ $probeCommand="& '"+$probeWorker.Replace("'","''")+"' -TaskDirectory '"+$probeDirectory.Replace("'","''")+"'"
+ $probeInfo=New-Object Diagnostics.ProcessStartInfo
+ $probeInfo.FileName=$powerShell;$probeInfo.Arguments='-NoLogo -NoProfile -NonInteractive -Mta -ExecutionPolicy Bypass -EncodedCommand '+[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($probeCommand))
+ $probeInfo.UseShellExecute=$false;$probeInfo.CreateNoWindow=$true;$probeInfo.RedirectStandardOutput=$true;$probeInfo.RedirectStandardError=$true
+ $probe=New-Object Diagnostics.Process;$probe.StartInfo=$probeInfo
+ try{
+  $null=$probe.Start();$probeOut=$probe.StandardOutput.ReadToEndAsync();$probeErr=$probe.StandardError.ReadToEndAsync()
+  if(!$probe.WaitForExit(45000)){try{$probe.Kill()}catch{};Assert-TaskTest $false 'Synchronous worker exceeded deadline.'}
+  $probeOutput=$probeOut.GetAwaiter().GetResult();$probeDiagnostic=$probeErr.GetAwaiter().GetResult()
+  if(![string]::IsNullOrWhiteSpace($probeDiagnostic)){
+   # Classify only fixed parser/runtime markers, never print the captured text.
+   $script:TaskError='WORKER_STDERR'
+   if($probeDiagnostic.Contains('ParserError')){$script:TaskError='WORKER_PARSE_ERROR'}
+   elseif($probeDiagnostic.Contains('ParameterBinding')){$script:TaskError='WORKER_PARAMETER_BINDING'}
+   elseif($probeDiagnostic.Contains('CommandNotFound')){$script:TaskError='WORKER_COMMAND_NOT_FOUND'}
+  }
+  $probeStatePath=Join-Path $probeDirectory 'state.json'
+  Assert-TaskTest ([IO.File]::Exists($probeStatePath)) 'Synchronous worker did not record state.'
+  try{$probeState=ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($probeStatePath))}catch{Assert-TaskTest $false 'Synchronous worker state is invalid JSON.'}
+  Remember-TaskTest ([PSCustomObject]@{ok=$true;data=$probeState})
+  Assert-TaskTest ($probeState.status -ceq 'exited' -and $probeState.exit_code -eq 0) 'Synchronous worker failed its synthetic child.'
+  Assert-TaskTest ([string]::IsNullOrWhiteSpace($probeOutput) -and [string]::IsNullOrWhiteSpace($probeDiagnostic)) 'Synchronous worker wrote diagnostics.'
+ }finally{$probe.Dispose()}
  $phase='authorization'
  $denied=Invoke-TaskTest 'task.start' @{profile='echo'}
  Assert-TaskTest (!$denied.ok -and $denied.error.code -ceq 'WRITE_NOT_ALLOWED') 'Mutation authorization was bypassed.'

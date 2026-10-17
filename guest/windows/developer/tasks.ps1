@@ -155,22 +155,23 @@ function Invoke-TaskStart($p) {
     $powerShell=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     if ([Environment]::Is64BitOperatingSystem -and ![Environment]::Is64BitProcess) { $powerShell=Join-Path $env:SystemRoot 'Sysnative\WindowsPowerShell\v1.0\powershell.exe' }
     $request=[ordered]@{task_id=$id;profile=$name;executable=[IO.Path]::GetFullPath($executable);cwd=[IO.Path]::GetFullPath($cwd);args=@($arguments);env=$environment;timeout_ms=$timeout;max_output_bytes=$cap;show_window=(Get-DevBoolean $profile 'show_window' $interactive)}
-    Write-TaskJson (Join-Path $directory 'request.json') $request
-    $command="& '"+$workerPath.Replace("'","''")+"' -TaskDirectory '"+$directory.Replace("'","''")+"'"
-    $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
-    $start=New-Object Diagnostics.ProcessStartInfo
-    $start.FileName=$powerShell;$start.Arguments='-NoLogo -NoProfile -NonInteractive -Mta -ExecutionPolicy Bypass -EncodedCommand '+$encoded
-    $start.UseShellExecute=$false;$start.CreateNoWindow=$true
-    $start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
-    # Separate redirected pipes keep the detached worker from holding the
-    # Parallels transport open. The worker emits no normal stdout/stderr.
-    $worker=New-Object Diagnostics.Process;$worker.StartInfo=$start
+    $nativePath=Join-Path $script:DevTaskModuleRoot 'workers\task-native.cs'
+    if(!(Test-Path -LiteralPath $workerPath -PathType Leaf) -or !(Test-Path -LiteralPath $nativePath -PathType Leaf)){Stop-Dev 'TASK_INSTALLATION_INVALID' 'Install the complete paired task worker files.'}
+    try{Add-Type -Path $nativePath -ErrorAction Stop}catch{Stop-Dev 'TASK_START_FAILED' 'The detached task launcher could not load.'}
+    $worker=New-Object Starbridge.Developer.DetachedWorker
     try {
-        if (!$worker.Start()) { Stop-Dev 'TASK_START_FAILED' 'The task worker could not start.' }
-        $null=$worker.StandardOutput.ReadToEndAsync();$null=$worker.StandardError.ReadToEndAsync()
-        $identity=[ordered]@{pid=$worker.Id;start_ticks=$worker.StartTime.ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture);executable=$worker.MainModule.FileName}
+        Write-TaskJson (Join-Path $directory 'request.json') $request
+        # Pass argv directly through the fixed Windows quoting adapter. The
+        # worker owns no pipe whose reader disappears when this helper exits.
+        $workerArguments=[string[]]@('-NoLogo','-NoProfile','-NonInteractive','-Mta','-ExecutionPolicy','Bypass','-File',$workerPath,'-TaskDirectory',$directory)
+        $worker.Start($powerShell,$workerArguments,$directory)
+        $identity=[ordered]@{pid=$worker.Pid;start_ticks=$worker.StartTimeTicks.ToString([Globalization.CultureInfo]::InvariantCulture);executable=$worker.Executable}
         Write-TaskJson (Join-Path $directory 'receipt.json') ([ordered]@{task_id=$id;profile=$name;status='starting';created_at=[DateTime]::UtcNow.ToString('o');worker=$identity})
-    } catch { Stop-Dev 'TASK_START_FAILED' 'The task worker could not be started or recorded.' }
+        $worker.Resume()
+    } catch {
+        try{[IO.File]::Delete((Join-Path $directory 'request.json'))}catch{}
+        Stop-Dev 'TASK_START_FAILED' 'The task worker could not be started or recorded.'
+    }
     finally { $worker.Dispose() }
     return (Get-TaskView $directory)
 }
