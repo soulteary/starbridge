@@ -90,10 +90,10 @@ function Resolve-DevUiActionParameters([string]$Name,$Object) {
 }
 
 function ConvertTo-DevUiVirtualKey([string]$Key) {
-    if($Key -cmatch '^[A-Z0-9]$'){return [ushort][char]$Key[0]}
+    if($Key -cmatch '^[A-Z0-9]$'){return [System.UInt16][char]$Key[0]}
     $codes=@{Enter=13;Tab=9;Escape=27;Space=32;Backspace=8;Delete=46;Home=36;End=35;PageUp=33;PageDown=34;Left=37;Right=39;Up=38;Down=40;Insert=45}
-    if($Key -cmatch '^F([1-9]|1[0-2])$'){return [ushort](111+[int]$Key.Substring(1))}
-    foreach($name in $codes.Keys){if($Key -ceq $name){return [ushort]$codes[$name]}}
+    if($Key -cmatch '^F([1-9]|1[0-2])$'){return [System.UInt16](111+[int]$Key.Substring(1))}
+    foreach($name in $codes.Keys){if($Key -ceq $name){return [System.UInt16]$codes[$name]}}
     Stop-DevUi 'INVALID_ARGUMENT' 'key must be a supported named keyboard key.'
 }
 
@@ -234,9 +234,9 @@ function Invoke-DevUiActionCore([string]$Name,$Parameters) {
             }
             'input.key'{
                 Assert-DevUiForeground $handle
-                $keys=New-Object 'Collections.Generic.List[ushort]'
+                $keys=New-Object 'Collections.Generic.List[System.UInt16]'
                 $modifierKeys=@{Control=17;Alt=18;Shift=16}
-                foreach($modifier in $Parameters.modifiers){$keys.Add([ushort]$modifierKeys[$modifier])}
+                foreach($modifier in $Parameters.modifiers){$keys.Add([System.UInt16]$modifierKeys[$modifier])}
                 $keys.Add((ConvertTo-DevUiVirtualKey $Parameters.key))
                 $null=Assert-DevUiWindow $Parameters;Assert-DevUiForeground $handle
                 $script:DevUiMutationBegan=$true
