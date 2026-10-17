@@ -125,6 +125,8 @@ codex mcp add starbridge -- /absolute/project/bin/starbridge serve
 
 ChatGPT 接入取决于所用环境是否能启动本地 stdio 工具；普通网页聊天不能直接访问 Mac 上的本地进程。当前没有实现远程 HTTP 接入、鉴权或发布插件。
 
+需要限制 MCP 可访问的 VM 与动作时，可使用 `serve --access-policy FILE`。策略按 UUID 授权，并对名称先解析再执行；详见 [MCP 的 VM 与动作授权](MCP_ACCESS.md)。
+
 ## 常见检查
 
 - **找不到 CLI**：检查 Parallels 安装与授权，必要时显式设置 `--prlctl` 或 `STARBRIDGE_PRLCTL`。

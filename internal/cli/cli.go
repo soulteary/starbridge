@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/soulteary/starbridge/internal/bridge"
-	"github.com/soulteary/starbridge/internal/mcpserver"
 	"github.com/soulteary/starbridge/internal/version"
 )
 
@@ -69,7 +68,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		if cmd.opts.DryRun {
 			err = invalid("serve cannot be combined with --dry-run.")
 		} else {
-			err = mcpserver.Run(ctx, b, cmd.flags["allow-vm-write"])
+			err = runMCP(ctx, b, cmd)
 		}
 		if err != nil {
 			writeResult(stderr, bridge.Failure(err))
@@ -280,6 +279,7 @@ func commandOptions(area, action string) (map[string]optionKind, bool, []string,
 	}
 	if area == "serve" {
 		schema["allow-vm-write"] = boolOption
+		schema["access-policy"] = stringOption
 		return schema, false, nil, nil
 	}
 	if area == "vm" {
@@ -466,7 +466,7 @@ max-nodes=300, timeout-ms=10000. UI inspection requires an interactive desktop.
 	case "doctor":
 		return "Usage: starbridge [global options] doctor\n\nInspect the host CLI and report guest prerequisites without starting a VM.\n"
 	case "serve":
-		return "Usage: starbridge [global options] serve [--allow-vm-write]\n\nServe local MCP tools over stdio. VM mutations are disabled by default.\nCannot be combined with --dry-run. Diagnostics go to stderr.\n"
+		return "Usage: starbridge [global options] serve [--allow-vm-write] [--access-policy FILE]\n\nServe local MCP tools over stdio. VM mutations are disabled by default.\nOptional access policy limits VMs by UUID and tools by name.\nCannot be combined with --dry-run. Diagnostics go to stderr.\n"
 	case "vm":
 		usage := map[string]string{
 			"list": "list", "info": "info VM", "start": "start VM", "stop": "stop VM [--force] [--confirm VM]",

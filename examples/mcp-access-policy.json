@@ -1,0 +1,11 @@
+{
+  "vms": {
+    "11111111-1111-1111-1111-111111111111": [
+      "vm_info",
+      "guest_processes",
+      "guest_windows",
+      "guest_ui_tree",
+      "vm_start"
+    ]
+  }
+}
