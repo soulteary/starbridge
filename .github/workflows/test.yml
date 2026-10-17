@@ -56,10 +56,6 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw ('Synthetic contract failed: ' + $contract.Name) }
           }
 
-      - name: Run synthetic UI query contracts
-        shell: powershell
-        run: '& .\tests\windows\developer-ui-query-contract.ps1'
-
       - name: Parse opt-in desktop acceptance scripts
         shell: powershell
         run: |
