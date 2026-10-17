@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "vm": "11111111-1111-4111-8111-111111111111",
+  "timeout_seconds": 120,
+  "steps": [
+    {"name": "start", "action": "vm.start"},
+    {"name": "environment", "action": "system.info"},
+    {"name": "run", "action": "task.start", "params": {"profile": "synthetic-tests"}},
+    {
+      "name": "wait",
+      "action": "wait.until",
+      "params": {
+        "action": "task.status",
+        "params": {"task_id": {"$ref": "run.data.task_id"}},
+        "predicate": {"path": "data.status", "op": "eq", "value": "exited"},
+        "timeout_ms": 60000
+      }
+    },
+    {
+      "name": "assert",
+      "action": "assert.matches",
+      "params": {
+        "action": "task.status",
+        "params": {"task_id": {"$ref": "run.data.task_id"}},
+        "predicate": {"path": "data.exit_code", "op": "eq", "value": 0}
+      }
+    }
+  ],
+  "cleanup": {"action": "vm.recycle", "params": {"mode": "stop"}}
+}
