@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/soulteary/starbridge/internal/bridge"
+	"github.com/soulteary/starbridge/internal/contract"
 )
 
 func developerRequest(values map[string]string) (map[string]any, error) {
@@ -31,6 +32,9 @@ func developerRequest(values map[string]string) (map[string]any, error) {
 	data, err := io.ReadAll(io.LimitReader(file, bridge.MaxDeveloperRequestBytes+1))
 	if err != nil || len(data) > bridge.MaxDeveloperRequestBytes || !utf8.Valid(data) {
 		return nil, invalid("Developer request file must contain at most 16000 bytes of UTF-8 JSON.")
+	}
+	if !contract.ValidJSONUnicode(data) {
+		return nil, invalid("Developer request strings must contain valid Unicode without unpaired surrogate escapes.")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()

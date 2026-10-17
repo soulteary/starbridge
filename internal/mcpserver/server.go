@@ -107,6 +107,9 @@ func decodeArguments(raw json.RawMessage, arguments map[string]argument) (map[st
 	if len(raw) > 64*1024 {
 		return invalid("Tool arguments exceed 64 KiB.")
 	}
+	if !contract.ValidJSONUnicode(raw) {
+		return invalid("Tool argument strings must contain valid Unicode without unpaired surrogate escapes.")
+	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	var input map[string]any

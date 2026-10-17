@@ -16,9 +16,11 @@
 
 通过 MCP 调用时显式开启 `serve --developer-tools`；独立写授权、动作策略及宿主工作目录见[MCP 开发工具](MCP_DEVELOPER.md)。
 
+具体接口见[控件搜索](DEVELOPER_UI_QUERY.md)、[窗口操作与 Unicode 文本输入](DEVELOPER_UI_ACTIONS.md)、[窗口截图](DEVELOPER_SCREENSHOTS.md)、[应用任务](DEVELOPER_TASKS.md)、[文件与安装](DEVELOPER_FILES.md)、[等待与断言](DEVELOPER_WAIT.md)、[工作流](DEVELOPER_WORKFLOW.md)和[证据导出](DEVELOPER_EVIDENCE.md)。
+
 ## 请求与响应
 
-主机使用参数向量调用当前 Windows 用户的 PowerShell，不拼接请求内容为命令。请求为最多 16000 字节的 UTF-8 JSON，经 Base64 传入 `-RequestBase64`：
+主机使用参数向量调用当前 Windows 用户的 PowerShell，不拼接请求内容为命令。请求为最多 16000 字节的 UTF-8 JSON；CLI 请求文件和 MCP 参数拒绝无效 UTF-8 与孤立 UTF-16 代理转义，避免解码时静默替换字符。请求经 Base64 传入 `-RequestBase64`：
 
 ```json
 {"action":"system.info","params":{}}
