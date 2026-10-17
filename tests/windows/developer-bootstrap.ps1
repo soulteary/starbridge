@@ -55,7 +55,10 @@ function Install-Fixture([string]$Target, [string]$Label, [bool]$Overwrite, $Bef
         Assert-Bootstrap ($commit.ok -eq $false -and $commit.error.code -ceq $ExpectedCode) 'expected commit conflict'
         return $commit
     }
-    Assert-Bootstrap ($commit.ok -eq $true -and $commit.data.file_count -eq 4) 'commit failed'
+    if ($commit.ok -ne $true) {
+        throw ('Bootstrap fixture commit failed: code={0}; type={1}; line={2}; label={3}.' -f $commit.error.code, $commit.error.diagnostic.exception_type, $commit.error.diagnostic.source_line, $Label)
+    }
+    Assert-Bootstrap ($commit.data.file_count -eq 4) 'commit file count changed'
     return $commit.data
 }
 try {

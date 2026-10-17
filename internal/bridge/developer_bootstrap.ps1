@@ -217,7 +217,7 @@ try {
 } catch {
     $code = [string]$_.Exception.Message
     if ($code -cnotmatch '^(INVALID_ARGUMENT|FILE_EXISTS|BOOTSTRAP_[A-Z_]+)$') { $code = 'BOOTSTRAP_IO' }
-    @{ok=$false;error=@{code=$code;message='Helper installation operation failed; inspect its state before retrying.'}} | ConvertTo-Json -Compress
+    @{ok=$false;error=@{code=$code;message='Helper installation operation failed; inspect its state before retrying.';diagnostic=@{exception_type=$_.Exception.GetType().Name;source_line=$_.InvocationInfo.ScriptLineNumber}}} | ConvertTo-Json -Compress -Depth 4
 } finally {
     if ($held) { $mutex.ReleaseMutex() }
     if ($null -ne $mutex) { $mutex.Dispose() }
