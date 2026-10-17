@@ -26,6 +26,8 @@ go build -o bin/starbridge ./cmd/starbridge
 
 Windows 查询还需 Parallels Tools 和手动安装的 helper；窗口与控件查询需已登录的桌面。安装、回收策略与 MCP 客户端配置见[安装与使用](docs/USAGE.md)。
 
+开发动作使用 `dev` 入口；环境与能力探测、配套模块安装和扩展协议见[开发工具](docs/DEVELOPER.md)。
+
 ## 文档
 
 - [安装与使用](docs/USAGE.md)：环境要求、CLI、回收策略和 MCP。

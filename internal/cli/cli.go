@@ -120,7 +120,7 @@ func apparentArea(args []string) string {
 			return arg
 		}
 		name, _, hasValue := splitOption(arg)
-		if !hasValue && (name == "prlctl" || name == "timeout" || name == "guest-script") {
+		if !hasValue && (name == "prlctl" || name == "timeout" || name == "guest-script" || name == "developer-script") {
 			i++
 		}
 	}
@@ -147,7 +147,7 @@ func parse(args []string) (command, error) {
 				return c, invalid("--dry-run does not accept a value.")
 			}
 			c.opts.DryRun = true
-		case "prlctl", "guest-script", "timeout":
+		case "prlctl", "guest-script", "developer-script", "timeout":
 			if !hasValue {
 				i++
 				if i >= len(args) || strings.HasPrefix(args[i], "--") || args[i] == "-h" {
@@ -160,6 +160,11 @@ func parse(args []string) (command, error) {
 				c.opts.PRLCTL = value
 			case "guest-script":
 				c.opts.GuestScript = value
+			case "developer-script":
+				if value == "" {
+					return c, invalid("--developer-script requires a nonempty path.")
+				}
+				c.opts.DeveloperScript = value
 			case "timeout":
 				seconds, err := strconv.ParseFloat(value, 64)
 				if err != nil || math.IsNaN(seconds) || math.IsInf(seconds, 0) || seconds < 1 || seconds > 600 {
@@ -173,13 +178,13 @@ func parse(args []string) (command, error) {
 		i++
 	}
 	if i >= len(args) {
-		return c, invalid("A command is required: doctor, vm, guest, or serve.")
+		return c, invalid("A command is required: doctor, vm, guest, dev, or serve.")
 	}
 	c.area = args[i]
 	i++
 	switch c.area {
 	case "doctor", "serve":
-	case "vm", "guest":
+	case "vm", "guest", "dev":
 		if i < len(args) && (args[i] == "--help" || args[i] == "-h") {
 			c.help = true
 			return c, nil
@@ -280,6 +285,11 @@ func splitOption(arg string) (name, value string, hasValue bool) {
 func commandOptions(area, action string) (map[string]optionKind, bool, []string, error) {
 	schema := map[string]optionKind{}
 	var required []string
+	if area == "dev" {
+		schema["request"] = stringOption
+		schema["allow-write"] = boolOption
+		return schema, true, nil, nil
+	}
 	if area == "doctor" {
 		schema["vm"] = stringOption
 		return schema, false, nil, nil
@@ -353,6 +363,12 @@ func dispatch(ctx context.Context, c command, b *bridge.Bridge) (bridge.Result, 
 	var data any
 	var err error
 	switch c.area {
+	case "dev":
+		params, err := developerRequest(c.values)
+		if err != nil {
+			return nil, err
+		}
+		return b.Developer(ctx, c.vm, c.action, params, c.flags["allow-write"])
 	case "doctor":
 		if vm, present := c.values["vm"]; present {
 			data, err = b.DoctorVM(ctx, vm)
@@ -426,12 +442,14 @@ Commands:
   doctor              Inspect host prerequisites without starting a VM
   vm <action>         List, inspect, or manage virtual machines
   guest <action>      Read Windows processes, windows, and UI controls
+  dev <action>        Run registered development actions (read-only by default)
   serve               Serve MCP over stdio
 
 Global options (before the command):
   --prlctl PATH        Parallels CLI executable
   --timeout SECONDS    Host command timeout, 1..600 (default 30)
   --guest-script PATH  Installed Windows helper path
+  --developer-script PATH  Installed developer helper entry path
   --dry-run            Preview argument vectors without executing
   --version            Print version
   -h, --help           Print help
@@ -475,6 +493,8 @@ max-nodes=300, timeout-ms=10000. UI inspection requires an interactive desktop.
 `
 	}
 	switch c.area {
+	case "dev":
+		return "Usage: starbridge [global options] dev ACTION VM [--request JSONFILE] [--allow-write]\n\nThe request file contains a JSON parameters object; omitted means {}.\nUse system.info to inspect installed developer actions. Mutations require --allow-write.\nDry runs validate parameters and stay offline.\n"
 	case "doctor":
 		return "Usage: starbridge [global options] doctor [--vm VM]\n\nInspect the host CLI. With --vm, probe guest session, windows and one UI root.\nRead-only; never starts a VM. Inspect data.ready and checks for readiness.\n"
 	case "serve":

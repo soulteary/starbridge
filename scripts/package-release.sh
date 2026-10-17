@@ -50,7 +50,7 @@ if [ -n "$(git status --porcelain)" ]; then dirty=true; fi
 # Keep Git and tar out of a pipeline: either failure must stop packaging.
 git ls-files --cached --error-unmatch -z -- \
   README.md CONTRIBUTING.md LICENSE THIRD_PARTY_NOTICES.md go.mod \
-  docs examples guest/windows/README.md guest/windows/desktop-bridge.ps1 \
+  docs examples guest/windows \
   tests/windows tests/fixtures > "$staging/support-files"
 xargs -0 sh -c '
   for source do
@@ -99,11 +99,14 @@ checkout; this binary distribution intentionally omits the Go source and Git dat
 
 Windows desktop queries also require Parallels Tools and the paired script:
   guest/windows/desktop-bridge.ps1
+Development actions additionally require the complete paired helper tree:
+  guest/windows/developer-bridge.ps1
+  guest/windows/developer/ (including nested workers)
 Install it in the guest using guest/windows/README.md. The binary does not
 install files, start VMs or bypass macOS Gatekeeper automatically.
 Optional Windows acceptance scripts and their fixtures are under tests/.
 INSTALL
-  printf 'version=%s\ncommit=%s\ndirty=%s\nos=darwin\narch=%s\nguest_protocol=1\ngo_version=%s\n' \
+  printf 'version=%s\ncommit=%s\ndirty=%s\nos=darwin\narch=%s\nguest_protocol=1\ndeveloper_protocol=dev-1\ngo_version=%s\n' \
     "$version" "$commit" "$dirty" "$arch" "$binary_go" > "$package/BUILD.txt"
   "$root/scripts/check-package-docs.sh" "$package"
   COPYFILE_DISABLE=1 tar -czf "$output/$name.tar.gz" -C "$staging" "$name"

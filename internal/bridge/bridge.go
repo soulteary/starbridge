@@ -20,8 +20,9 @@ import (
 )
 
 const (
-	DefaultGuestScript = `C:\ProgramData\Starbridge\desktop-bridge.ps1`
-	AppPRLCTL          = "/Applications/Parallels Desktop.app/Contents/MacOS/prlctl"
+	DefaultGuestScript     = `C:\ProgramData\Starbridge\desktop-bridge.ps1`
+	DefaultDeveloperScript = `C:\ProgramData\Starbridge\developer-bridge.ps1`
+	AppPRLCTL              = "/Applications/Parallels Desktop.app/Contents/MacOS/prlctl"
 	// MaxOutputBytes bounds the subprocess's stdout, including JSON responses.
 	MaxOutputBytes = 8 * 1024 * 1024
 )
@@ -55,14 +56,15 @@ func Failure(err error) Result {
 }
 
 type Options struct {
-	PRLCTL      string
-	Timeout     time.Duration
-	GuestScript string
-	DryRun      bool
+	PRLCTL          string
+	Timeout         time.Duration
+	GuestScript     string
+	DeveloperScript string
+	DryRun          bool
 }
 
 func DefaultOptions() Options {
-	return Options{Timeout: 30 * time.Second, GuestScript: DefaultGuestScript}
+	return Options{Timeout: 30 * time.Second, GuestScript: DefaultGuestScript, DeveloperScript: DefaultDeveloperScript}
 }
 
 type commandResult struct {
@@ -94,11 +96,17 @@ func absoluteWindowsPath(path string) bool {
 }
 
 func New(options Options) (*Bridge, error) {
+	if options.DeveloperScript == "" {
+		options.DeveloperScript = DefaultDeveloperScript
+	}
 	if options.Timeout < time.Second || options.Timeout > 600*time.Second {
 		return nil, NewError("INVALID_ARGUMENT", "timeout must be between 1 and 600 seconds.", nil)
 	}
 	if !absoluteWindowsPath(options.GuestScript) || strings.ContainsAny(options.GuestScript, "\r\n\x00\"") {
 		return nil, NewError("INVALID_ARGUMENT", "guest-script must be an absolute Windows path without quotes.", nil)
+	}
+	if !absoluteWindowsPath(options.DeveloperScript) || strings.ContainsAny(options.DeveloperScript, "\r\n\x00\"") {
+		return nil, NewError("INVALID_ARGUMENT", "developer-script must be an absolute Windows path without quotes.", nil)
 	}
 	return &Bridge{options: options, runner: runCommand, resolve: resolvePRLCTL}, nil
 }
