@@ -52,7 +52,16 @@ try {
     $state.stdout_truncated=$runner.StdoutTruncated;$state.stderr_truncated=$runner.StderrTruncated
     Write-TaskJson (Join-Path $TaskDirectory 'state.json') $state
 } catch {
-    if($null -ne $state){$state.status='failed';$state['error_code']='TASK_WORKER_FAILED';$state['failure_stage']=$phase;Write-TaskJson (Join-Path $TaskDirectory 'state.json') $state}
+    if($null -ne $state){
+        $state.status='failed';$state['error_code']='TASK_WORKER_FAILED';$state['failure_stage']=$phase
+        $exception=$_.Exception
+        for($depth=0;$depth-lt8 -and $null-ne$exception.InnerException;$depth++){$exception=$exception.InnerException}
+        $state['failure_exception_type']=$exception.GetType().Name
+        $state['failure_line']=[int]$_.InvocationInfo.ScriptLineNumber
+        if($exception -is [ComponentModel.Win32Exception]){$state['failure_native_error']=[int]$exception.NativeErrorCode}
+        if($null-ne$runner){$state['failure_native_stage']=[string]$runner.Stage}
+        Write-TaskJson (Join-Path $TaskDirectory 'state.json') $state
+    }
 } finally {
     if($null -ne $runner){$runner.Dispose()}
     # The request can contain environment secrets. Keep only receipt, identities,

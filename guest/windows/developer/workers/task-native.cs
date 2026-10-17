@@ -42,6 +42,7 @@ namespace Starbridge.Developer {
         Task outputTask,errorTask;
         long stdoutBytes,stderrBytes;
         volatile bool stdoutTruncated,stderrTruncated;
+        public string Stage { get; private set; }
         public int Pid { get; private set; }
         public long StartTimeTicks { get; private set; }
         public string Executable { get; private set; }
@@ -71,14 +72,17 @@ namespace Starbridge.Developer {
         public void Start(string executable,string[] arguments,string directory,IDictionary environment,string stdout,string stderr,int cap,bool showWindow) {
             IntPtr outputRead=IntPtr.Zero,outputWrite=IntPtr.Zero,errorRead=IntPtr.Zero,errorWrite=IntPtr.Zero,input=IntPtr.Zero,environmentBlock=IntPtr.Zero,thread=IntPtr.Zero;
             try {
+                Stage="create_job";
                 job=CreateJobObject(IntPtr.Zero,null);if(job==IntPtr.Zero)throw new Win32Exception(Marshal.GetLastWin32Error());
                 EXTENDED_LIMITS limits=new EXTENDED_LIMITS();limits.basic.flags=0x2000;
                 IntPtr pointer=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(EXTENDED_LIMITS)));
                 try {Marshal.StructureToPtr(limits,pointer,false);Check(SetInformationJobObject(job,9,pointer,(uint)Marshal.SizeOf(typeof(EXTENDED_LIMITS))));}finally{Marshal.FreeHGlobal(pointer);}
+                Stage="create_pipes";
                 SECURITY_ATTRIBUTES attributes=new SECURITY_ATTRIBUTES();attributes.length=Marshal.SizeOf(typeof(SECURITY_ATTRIBUTES));attributes.inherit=true;
                 Check(CreatePipe(out outputRead,out outputWrite,ref attributes,0));Check(SetHandleInformation(outputRead,1,0));
                 Check(CreatePipe(out errorRead,out errorWrite,ref attributes,0));Check(SetHandleInformation(errorRead,1,0));
                 input=CreateFile("NUL",0x80000000,3,ref attributes,3,0,IntPtr.Zero);if(input==new IntPtr(-1))throw new Win32Exception(Marshal.GetLastWin32Error());
+                Stage="environment";
                 SortedDictionary<string,string> variables=new SortedDictionary<string,string>(StringComparer.OrdinalIgnoreCase);
                 foreach(DictionaryEntry pair in Environment.GetEnvironmentVariables())variables[(string)pair.Key]=(string)pair.Value;
                 foreach(DictionaryEntry pair in environment)variables[(string)pair.Key]=(string)pair.Value;
@@ -87,16 +91,22 @@ namespace Starbridge.Developer {
                 STARTUPINFO startup=new STARTUPINFO();startup.cb=Marshal.SizeOf(typeof(STARTUPINFO));startup.flags=0x100|1;startup.show=(short)(showWindow?1:0);startup.input=input;startup.output=outputWrite;startup.error=errorWrite;
                 StringBuilder command=new StringBuilder(QuoteArgument(executable));foreach(string arg in arguments)command.Append(' ').Append(QuoteArgument(arg));
                 PROCESS_INFORMATION info;
+                Stage="create_process";
                 Check(CreateProcess(executable,command,IntPtr.Zero,IntPtr.Zero,true,0x4|0x400|0x8000000,environmentBlock,directory,ref startup,out info));
                 process=info.process;thread=info.thread;Pid=(int)info.pid;Executable=executable;
                 // Failure here leaves a suspended process, which is terminated by handle.
+                Stage="assign_job";
                 Check(AssignProcessToJobObject(job,process));
+                Stage="process_identity";
                 long created,exited,kernel,user;Check(GetProcessTimes(process,out created,out exited,out kernel,out user));StartTimeTicks=DateTime.FromFileTimeUtc(created).Ticks;
+                Stage="capture_output";
                 outputReader=new FileStream(new SafeFileHandle(outputRead,true),FileAccess.Read);outputRead=IntPtr.Zero;
                 errorReader=new FileStream(new SafeFileHandle(errorRead,true),FileAccess.Read);errorRead=IntPtr.Zero;
                 outputTask=Task.Factory.StartNew(delegate{Capture(outputReader,stdout,cap,true);},TaskCreationOptions.LongRunning);
                 errorTask=Task.Factory.StartNew(delegate{Capture(errorReader,stderr,cap,false);},TaskCreationOptions.LongRunning);
+                Stage="resume_process";
                 if(ResumeThread(thread)==UInt32.MaxValue)throw new Win32Exception(Marshal.GetLastWin32Error());
+                Stage="running";
             } catch {if(process!=IntPtr.Zero)TerminateProcess(process,1);Dispose();throw;}
             finally {Close(ref outputRead);Close(ref errorRead);Close(ref outputWrite);Close(ref errorWrite);Close(ref input);Close(ref thread);if(environmentBlock!=IntPtr.Zero)Marshal.FreeHGlobal(environmentBlock);}
         }
@@ -111,7 +121,7 @@ namespace Starbridge.Developer {
                 }
             }
         }
-        public void FinishOutput() { if(outputTask!=null && errorTask!=null && !Task.WaitAll(new Task[]{outputTask,errorTask},5000))throw new IOException("Output pipes did not close."); }
+        public void FinishOutput() { Stage="finish_output"; if(outputTask!=null && errorTask!=null && !Task.WaitAll(new Task[]{outputTask,errorTask},5000))throw new IOException("Output pipes did not close."); }
         public void Cancel() {Check(TerminateJobObject(job,1));}
         public bool RequestClose() {
             using(Process child=Process.GetProcessById(Pid)) {
