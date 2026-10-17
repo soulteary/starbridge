@@ -66,7 +66,7 @@ function Invoke-DevScreenshotCore($Parameters) {
             if($Parameters.capture_method -ceq 'windows_graphics_capture'){
                 $remaining=[int]($Parameters.timeout_ms-$clock.ElapsedMilliseconds)
                 if($remaining -le 0){Stop-DevUi 'SCREENSHOT_TIMEOUT' 'The screenshot exceeded timeout_ms.'}
-                $png=[StarbridgeDeveloperScreenshot.Wgc]::Capture($handle,$before.width,$before.height,$Parameters.max_pixels,$Parameters.max_bytes,$remaining)
+                $png=[StarbridgeDeveloperScreenshot.Wgc]::Capture($handle,$before,$Parameters.max_pixels,$Parameters.max_bytes,$remaining)
             }else{
                 $png=[StarbridgeDeveloperScreenshot.Native]::Capture($handle,$before.width,$before.height,$Parameters.max_pixels,$Parameters.max_bytes)
             }

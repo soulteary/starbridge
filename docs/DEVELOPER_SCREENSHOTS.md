@@ -46,9 +46,14 @@ The result contains:
   `coordinate_space:"guest-screen-physical-pixels"`: the full window rectangle,
   sampled under a per-monitor DPI context. PrintWindow uses `GetWindowRect`,
   which may include invisible resize margins. WGC uses the compositor's
-  `DWMWA_EXTENDED_FRAME_BOUNDS`, excluding those invisible margins. WGC also
-  requires the capture item, frame content and GPU texture dimensions to match
-  these bounds; mismatches are rejected without cropping or scaling. The helper
+  `DWMWA_EXTENDED_FRAME_BOUNDS`, excluding those invisible margins. WGC allocates
+  the frame pool from `GraphicsCaptureItem.Size` and reads only the frame's valid
+  `ContentSize`; these sizes can differ from the reported screen rectangle.
+  Content matching DWM bounds is used directly. Content matching the physical
+  `GetWindowRect` is cropped by the measured rectangle offsets to remove resize
+  margins, including asymmetric margins. Other static size/origin combinations
+  return `WGC_GEOMETRY_UNAVAILABLE` instead of guessing coordinates or claiming
+  that the window moved. The helper
   rejects a move or resize detected after rendering. PNG
   pixel `(0,0)` corresponds to this window rectangle's `(x,y)`.
 - `png_base64`, `byte_length`, `sha256`: PNG bytes, compressed byte count and
@@ -80,9 +85,17 @@ installed compiler is needed. Windows PowerShell 5.1 compiles the paired C#
 source using its existing .NET Framework compiler. Install the complete helper
 tree, including `developer/workers/screenshot-wgc.cs`.
 
-The backend uses a hardware D3D11 device and a bounded BGRA8 frame pool, copies
-one frame to a staging texture, waits within the deadline for CPU readback and
-encodes it with the same bounded PNG stream. It preserves Windows' capture
+The backend follows Microsoft's
+[frame-size and content-subrectangle guidance](https://learn.microsoft.com/windows/uwp/audio-video-camera/screen-capture):
+it uses a hardware D3D11 device and a BGRA8 pool sized from the capture item,
+copies one frame to a staging texture, waits within the deadline for CPU readback
+and encodes only the verified visible region with the same bounded PNG stream.
+Both the complete pool/content and returned image must satisfy `max_pixels` and
+the dimension limit, so removing margins does not bypass allocation budgets.
+Item size, DWM bounds and physical outer-window bounds are checked again after
+readback; a detected change returns `WINDOW_GEOMETRY_CHANGED`. Texture extents,
+valid content, crop offsets and row pitch are checked separately; undefined
+texture padding is never encoded. No image scaling occurs. It preserves Windows' capture
 indicator and does not request borderless capture or bypass display-affinity
 restrictions. HDR colors may clip in this BGRA8 path. Compositor frames can still
 be blank, stale or incomplete; a valid, correctly hashed PNG is not proof of

@@ -16,6 +16,34 @@ foreach($file in @('screenshot-native.ps1','screenshot-core.ps1','screenshot-cap
 . (Join-Path $workers 'screenshot-core.ps1')
 Initialize-DevScreenshotNative
 $checks=0
+function New-TestCaptureRect([int[]]$Values){
+    $rect=New-Object StarbridgeDeveloperScreenshot.CaptureRect
+    $rect.x=$Values[0];$rect.y=$Values[1];$rect.width=$Values[2];$rect.height=$Values[3]
+    return $rect
+}
+# Item/pool dimensions and valid frame content need not equal DWM bounds.
+# Only known outer-window or visible-frame extents establish a screen origin;
+# asymmetric margins are derived from positions, never divided in half.
+foreach($case in @(
+    @{content=@(100,100);outer=@(-108,11,118,115);visible=@(-100,20,100,100);expected=@(0,0,100,100)},
+    @{content=@(118,115);outer=@(-108,11,118,115);visible=@(-100,20,100,100);expected=@(8,9,100,100)},
+    @{content=@(100,100);outer=@(-100,-200,100,100);visible=@(-100,-200,100,100);expected=@(0,0,100,100)}
+)){
+    $region=[StarbridgeDeveloperScreenshot.Wgc]::ResolveFrameRegion($case.content[0],$case.content[1],(New-TestCaptureRect $case.outer),(New-TestCaptureRect $case.visible),16777216)
+    if($region.x -ne $case.expected[0] -or $region.y -ne $case.expected[1] -or $region.width -ne $case.expected[2] -or $region.height -ne $case.expected[3]){throw 'WGC frame margins or negative screen origin were mapped incorrectly.'};$checks++
+}
+foreach($case in @(
+    @{content=@(117,115);outer=@(-108,11,118,115);visible=@(-100,20,100,100);limit=16777216;code='WGC_GEOMETRY_UNAVAILABLE'},
+    @{content=@(118,115);outer=@(-108,11,118,115);visible=@(-110,20,100,100);limit=16777216;code='WGC_GEOMETRY_UNAVAILABLE'},
+    @{content=@(100,100);outer=@(-108,20,100,100);visible=@(-100,20,100,100);limit=16777216;code='WGC_GEOMETRY_UNAVAILABLE'},
+    @{content=@(118,115);outer=@(-108,11,118,115);visible=@(-100,20,100,100);limit=10000;code='SCREENSHOT_PIXEL_LIMIT'}
+)){
+    try{$null=[StarbridgeDeveloperScreenshot.Wgc]::ResolveFrameRegion($case.content[0],$case.content[1],(New-TestCaptureRect $case.outer),(New-TestCaptureRect $case.visible),$case.limit);throw 'WGC accepted an ambiguous frame origin or oversized source.'}
+    catch{
+        $cause=$_.Exception;while($null -ne $cause.InnerException){$cause=$cause.InnerException}
+        if($cause -isnot [StarbridgeDeveloperScreenshot.CaptureException] -or $cause.Code -cne $case.code){throw 'WGC static geometry or source budget returned the wrong safe code.'}
+    };$checks++
+}
 # Both native capture and DWM geometry failures use the same safe mapping.
 # Wrapped synthetic exceptions exercise it without creating an oversized window
 # or querying any actual HWND. Unknown exceptions retain the caller's fallback.
@@ -57,6 +85,20 @@ try{
         $image=New-Object Drawing.Bitmap($stream)
         if($image.Width -ne 2 -or $image.Height -ne 2 -or $image.GetPixel(0,0).R -ne 255 -or $image.GetPixel(1,0).G -ne 255 -or $image.GetPixel(0,1).B -ne 255 -or $image.GetPixel(1,1).R -ne 255){throw 'BGRA row-pitch or channel conversion changed.'}
     }finally{if($null -ne $image){$image.Dispose()};$stream.Dispose()};$checks++
+    $region=New-TestCaptureRect @(1,1,1,1)
+    $cropped=[StarbridgeDeveloperScreenshot.Wgc]::EncodeBgraRegion($pointer,12,2,2,$region,4,4096)
+    $cropStream=New-Object IO.MemoryStream(,$cropped);$cropImage=$null
+    try{
+        $cropImage=New-Object Drawing.Bitmap($cropStream);$pixel=$cropImage.GetPixel(0,0)
+        if($cropImage.Width -ne 1 -or $cropImage.Height -ne 1 -or $pixel.R -ne 255 -or $pixel.G -ne 255 -or $pixel.B -ne 255){throw 'WGC content crop ignored source pitch or pixel offset.'}
+    }finally{if($null -ne $cropImage){$cropImage.Dispose()};$cropStream.Dispose()};$checks++
+    foreach($coordinates in @(@(-1,0,1,1),@(2,0,1,1),@(0,2,1,1),@(1,1,2147483647,1))){
+        try{$null=[StarbridgeDeveloperScreenshot.Wgc]::EncodeBgraRegion($pointer,12,2,2,(New-TestCaptureRect $coordinates),4,4096);throw 'WGC cropped outside valid content.'}
+        catch{
+            $cause=$_.Exception;while($null -ne $cause.InnerException){$cause=$cause.InnerException}
+            if($cause -isnot [StarbridgeDeveloperScreenshot.CaptureException] -or $cause.Code -cne 'WGC_INVALID_BUFFER'){throw 'WGC crop bounds did not fail safely.'}
+        };$checks++
+    }
     foreach($case in @(@{pitch=7;maxPixels=4;maxBytes=4096;code='WGC_INVALID_BUFFER'},@{pitch=12;maxPixels=3;maxBytes=4096;code='SCREENSHOT_PIXEL_LIMIT'},@{pitch=12;maxPixels=4;maxBytes=1;code='SCREENSHOT_BYTE_LIMIT'})){
         try{$null=[StarbridgeDeveloperScreenshot.Wgc]::EncodeBgra($pointer,$case.pitch,2,2,$case.maxPixels,$case.maxBytes);throw 'BGRA budget was ignored.'}
         catch{

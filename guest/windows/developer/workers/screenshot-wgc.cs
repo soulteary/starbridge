@@ -31,6 +31,7 @@ namespace StarbridgeDeveloperScreenshot {
         [DllImport("d3d11.dll")] static extern int CreateDirect3D11DeviceFromDXGIDevice(IntPtr dxgi,out IntPtr device);
         [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr hwnd,int attribute,out RECT value,int size);
         [DllImport("user32.dll")] static extern bool GetWindowDisplayAffinity(IntPtr hwnd,out uint affinity);
+        [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd,out RECT rect);
         [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int NoArguments(IntPtr self);
         [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate void FlushContext(IntPtr self);
         [UnmanagedFunctionPointer(CallingConvention.StdCall)] delegate int GetBoolean(IntPtr self,out byte value);
@@ -122,49 +123,85 @@ namespace StarbridgeDeveloperScreenshot {
             if(width<1 || height<1 || width>16384 || height>16384)throw new CaptureException("SCREENSHOT_PIXEL_LIMIT");
             return new CaptureRect{x=rect.left,y=rect.top,width=(int)width,height=(int)height};
         }
+        static CaptureRect OuterWindowRect(IntPtr hwnd) {
+            RECT rect;if(!GetWindowRect(hwnd,out rect))throw new CaptureException("WGC_GEOMETRY_UNAVAILABLE");
+            long width=(long)rect.right-rect.left,height=(long)rect.bottom-rect.top;
+            if(width<1 || height<1 || width>Int32.MaxValue || height>Int32.MaxValue)throw new CaptureException("WGC_GEOMETRY_UNAVAILABLE");
+            return new CaptureRect{x=rect.left,y=rect.top,width=(int)width,height=(int)height};
+        }
+        static bool SameRect(CaptureRect left,CaptureRect right) {
+            return left.x==right.x && left.y==right.y && left.width==right.width && left.height==right.height;
+        }
+        // ContentSize is the valid top-left sub-rectangle of the frame surface,
+        // not necessarily the pool/item size. Resolve only known HWND extents;
+        // never infer asymmetric screen margins from a size difference alone.
+        public static CaptureRect ResolveFrameRegion(int contentWidth,int contentHeight,CaptureRect outer,CaptureRect visible,int maxPixels) {
+            Native.ValidateDimensions(contentWidth,contentHeight,maxPixels);
+            if(outer==null || visible==null || outer.width<1 || outer.height<1)throw new CaptureException("WGC_GEOMETRY_UNAVAILABLE");
+            Native.ValidateDimensions(visible.width,visible.height,maxPixels);
+            bool frameSize=contentWidth==visible.width && contentHeight==visible.height;
+            bool outerSize=contentWidth==outer.width && contentHeight==outer.height;
+            if(frameSize && outerSize && (outer.x!=visible.x || outer.y!=visible.y))throw new CaptureException("WGC_GEOMETRY_UNAVAILABLE");
+            if(frameSize)return new CaptureRect{x=0,y=0,width=visible.width,height=visible.height};
+            long x=(long)visible.x-outer.x,y=(long)visible.y-outer.y;
+            if(outerSize && x>=0 && y>=0 && x+visible.width<=contentWidth && y+visible.height<=contentHeight)
+                return new CaptureRect{x=(int)x,y=(int)y,width=visible.width,height=visible.height};
+            throw new CaptureException("WGC_GEOMETRY_UNAVAILABLE");
+        }
         static void Deadline(Stopwatch clock,int timeout) { if(clock.ElapsedMilliseconds>=timeout)throw new CaptureException("SCREENSHOT_TIMEOUT"); }
         public static byte[] EncodeBgra(IntPtr pixels,int rowPitch,int width,int height,int maxPixels,int maxBytes) {
-            Native.ValidateDimensions(width,height,maxPixels);
-            if(pixels==IntPtr.Zero || rowPitch<checked(width*4) || (long)rowPitch*height>Int32.MaxValue)throw new CaptureException("WGC_INVALID_BUFFER");
-            using(Bitmap bitmap=new Bitmap(width,height,PixelFormat.Format32bppPArgb)) {
-                BitmapData target=bitmap.LockBits(new Rectangle(0,0,width,height),ImageLockMode.WriteOnly,PixelFormat.Format32bppPArgb);
+            return EncodeBgraRegion(pixels,rowPitch,width,height,new CaptureRect{x=0,y=0,width=width,height=height},maxPixels,maxBytes);
+        }
+        public static byte[] EncodeBgraRegion(IntPtr pixels,int rowPitch,int contentWidth,int contentHeight,CaptureRect region,int maxPixels,int maxBytes) {
+            Native.ValidateDimensions(contentWidth,contentHeight,maxPixels);
+            if(region==null || region.x<0 || region.y<0 || (long)region.x+region.width>contentWidth || (long)region.y+region.height>contentHeight)throw new CaptureException("WGC_INVALID_BUFFER");
+            Native.ValidateDimensions(region.width,region.height,maxPixels);
+            if(pixels==IntPtr.Zero || rowPitch<checked(contentWidth*4) || (long)rowPitch*contentHeight>Int32.MaxValue)throw new CaptureException("WGC_INVALID_BUFFER");
+            using(Bitmap bitmap=new Bitmap(region.width,region.height,PixelFormat.Format32bppPArgb)) {
+                BitmapData target=bitmap.LockBits(new Rectangle(0,0,region.width,region.height),ImageLockMode.WriteOnly,PixelFormat.Format32bppPArgb);
                 try {
-                    byte[] row=new byte[checked(width*4)];
-                    for(int y=0;y<height;y++){Marshal.Copy(IntPtr.Add(pixels,checked(y*rowPitch)),row,0,row.Length);Marshal.Copy(row,0,IntPtr.Add(target.Scan0,checked(y*target.Stride)),row.Length);}
+                    byte[] row=new byte[checked(region.width*4)];
+                    for(int y=0;y<region.height;y++){Marshal.Copy(IntPtr.Add(pixels,checked((region.y+y)*rowPitch+region.x*4)),row,0,row.Length);Marshal.Copy(row,0,IntPtr.Add(target.Scan0,checked(y*target.Stride)),row.Length);}
                 } finally {bitmap.UnlockBits(target);}
                 return Native.Encode(bitmap,maxBytes);
             }
         }
-        public static byte[] Capture(IntPtr hwnd,int width,int height,int maxPixels,int maxBytes,int timeout) {
-            Native.ValidateDimensions(width,height,maxPixels);Stopwatch clock=Stopwatch.StartNew();
+        public static byte[] Capture(IntPtr hwnd,CaptureRect expectedRect,int maxPixels,int maxBytes,int timeout) {
+            Native.ValidateDimensions(expectedRect.width,expectedRect.height,maxPixels);Stopwatch clock=Stopwatch.StartNew();
             IntPtr interop=IntPtr.Zero,factory=IntPtr.Zero,device=IntPtr.Zero,context=IntPtr.Zero,direct=IntPtr.Zero,item=IntPtr.Zero,pool=IntPtr.Zero,session=IntPtr.Zero,frame=IntPtr.Zero,surface=IntPtr.Zero,access=IntPtr.Zero,texture=IntPtr.Zero,staging=IntPtr.Zero;
             bool initialized=false,mapped=false;
             try {
                 if(Build()<18362)throw new CaptureException("WGC_OS_UNSUPPORTED");
                 initialized=InitializeRuntime();CheckSupport(out interop,out factory);CreateDevice(out device,out context,out direct);Deadline(clock,timeout);
                 uint affinity;if(GetWindowDisplayAffinity(hwnd,out affinity) && affinity!=0)throw new CaptureException("WGC_WINDOW_EXCLUDED");
+                CaptureRect visible=WindowRect(hwnd),outer=OuterWindowRect(hwnd);
+                if(!SameRect(expectedRect,visible))throw new CaptureException("WINDOW_GEOMETRY_CHANGED");
                 Guid itemId=Item;Check(Method<CreateItem>(interop,3)(interop,hwnd,ref itemId,out item),"WGC_WINDOW_UNSUPPORTED");
                 Size size;Check(Method<GetSize>(item,7)(item,out size),"WGC_GEOMETRY_UNAVAILABLE");
-                if(size.width!=width || size.height!=height)throw new CaptureException("WINDOW_GEOMETRY_CHANGED");
                 Native.ValidateDimensions(size.width,size.height,maxPixels);
                 Check(Method<CreatePool>(factory,6)(factory,direct,87,1,size,out pool),"WGC_UNSUPPORTED");
                 Check(Method<CreateSession>(pool,10)(pool,item,out session),"WGC_WINDOW_UNSUPPORTED");
                 Check(Method<NoArguments>(session,6)(session),"WGC_ACCESS_DENIED");
                 while(frame==IntPtr.Zero){Deadline(clock,timeout);Check(Method<GetPointer>(pool,7)(pool,out frame),"WGC_FRAME_UNAVAILABLE");if(frame==IntPtr.Zero)Thread.Sleep(5);}
                 Size content;Check(Method<GetSize>(frame,8)(frame,out content),"WGC_FRAME_UNAVAILABLE");
-                if(content.width!=width || content.height!=height)throw new CaptureException("WINDOW_GEOMETRY_CHANGED");
+                Native.ValidateDimensions(content.width,content.height,maxPixels);
+                if(content.width>size.width || content.height>size.height)throw new CaptureException("WGC_INVALID_BUFFER");
+                CaptureRect region=ResolveFrameRegion(content.width,content.height,outer,visible,maxPixels);
                 Check(Method<GetPointer>(frame,6)(frame,out surface),"WGC_FRAME_UNAVAILABLE");access=Query(surface,SurfaceAccess);
                 Guid textureId=Texture;Check(Method<GetInterface>(access,3)(access,ref textureId,out texture),"WGC_FRAME_UNAVAILABLE");
                 TextureDescription description;Method<GetDescription>(texture,10)(texture,out description);
-                if(description.width!=width || description.height!=height || description.format!=87 || description.samples!=1 || description.array!=1 || description.mips!=1)throw new CaptureException("WGC_INVALID_BUFFER");
+                if(description.width!=size.width || description.height!=size.height || description.format!=87 || description.samples!=1 || description.array!=1 || description.mips!=1)throw new CaptureException("WGC_INVALID_BUFFER");
                 description.usage=3;description.bind=0;description.cpu=0x20000;description.misc=0;
                 Check(Method<CreateTexture>(device,5)(device,ref description,IntPtr.Zero,out staging),"WGC_DEVICE_UNAVAILABLE");
                 Method<CopyResource>(context,47)(context,staging,texture);
                 Method<FlushContext>(context,111)(context);
                 Mapped pixels;
                 while(true){Deadline(clock,timeout);int hr=Method<MapResource>(context,14)(context,staging,0,1,0x100000,out pixels);if(hr==unchecked((int)0x887A000A)){Thread.Sleep(5);continue;}Check(hr,"WGC_READBACK_FAILED");mapped=true;break;}
-                if(pixels.rowPitch>Int32.MaxValue)throw new CaptureException("WGC_INVALID_BUFFER");
-                byte[] png=EncodeBgra(pixels.data,(int)pixels.rowPitch,width,height,maxPixels,maxBytes);Deadline(clock,timeout);return png;
+                if(pixels.rowPitch>Int32.MaxValue || pixels.rowPitch<description.width*4)throw new CaptureException("WGC_INVALID_BUFFER");
+                byte[] png=EncodeBgraRegion(pixels.data,(int)pixels.rowPitch,content.width,content.height,region,maxPixels,maxBytes);
+                Size current;Check(Method<GetSize>(item,7)(item,out current),"WGC_GEOMETRY_UNAVAILABLE");
+                if(current.width!=size.width || current.height!=size.height || !SameRect(visible,WindowRect(hwnd)) || !SameRect(outer,OuterWindowRect(hwnd)))throw new CaptureException("WINDOW_GEOMETRY_CHANGED");
+                Deadline(clock,timeout);return png;
             } catch(DllNotFoundException){throw new CaptureException("WGC_API_UNAVAILABLE");}
             catch(EntryPointNotFoundException){throw new CaptureException("WGC_API_UNAVAILABLE");}
             finally {
