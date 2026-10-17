@@ -52,7 +52,9 @@ jobs:
             Sort-Object Name
           foreach ($contract in $contracts) {
             Write-Host ('Running synthetic contract: ' + $contract.Name)
-            & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $contract.FullName
+            $command = "& '" + $contract.FullName.Replace("'", "''") + "'"
+            $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+            & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded
             if ($LASTEXITCODE -ne 0) { throw ('Synthetic contract failed: ' + $contract.Name) }
           }
 
