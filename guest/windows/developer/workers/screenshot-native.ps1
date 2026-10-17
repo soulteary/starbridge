@@ -62,6 +62,10 @@ namespace StarbridgeDeveloperScreenshot {
                     if(stream.LimitExceeded)throw new CaptureException("SCREENSHOT_BYTE_LIMIT");
                     throw new CaptureException("SCREENSHOT_ENCODE_FAILED");
                 }
+                // Some GDI+ encoders swallow a managed stream write failure.
+                // Never accept their partial output as a completed PNG.
+                if(stream.LimitExceeded || stream.Length>maxBytes)
+                    throw new CaptureException("SCREENSHOT_BYTE_LIMIT");
                 return stream.ToArray();
             }
         }
