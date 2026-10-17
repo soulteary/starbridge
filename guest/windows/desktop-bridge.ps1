@@ -27,10 +27,17 @@ function Stop-Bridge([string]$Code, [string]$Message) {
 }
 
 function Get-Field($Object, [string]$Name, $Default = $null) {
-    if ($null -eq $Object) { return $Default }
+    if ($null -eq $Object) { return ,$Default }
     $property = $Object.PSObject.Properties[$Name]
-    if ($null -eq $property) { return $Default }
-    return $property.Value
+    if ($null -eq $property) { return ,$Default }
+    # Keep [] and [value] as arrays so field validation sees their JSON types.
+    return ,$property.Value
+}
+
+function Test-JsonObject($Value) {
+    # The [pscustomobject] accelerator aliases PSObject, including wrapped values
+    # and AutomationNull. Compare the actual JSON object's underlying type.
+    return (($null -ne $Value) -and ($Value.GetType() -eq [System.Management.Automation.PSCustomObject]))
 }
 
 function Get-Integer($Object, [string]$Name, [int]$Default, [int]$Min, [int]$Max) {
@@ -507,15 +514,18 @@ try {
         if ($requestBytes.Length -gt 16000) { throw 'Request too large.' }
         $strictUtf8 = New-Object Text.UTF8Encoding($false, $true)
         $requestText = $strictUtf8.GetString($requestBytes)
+        # Windows PowerShell unwraps a top-level singleton JSON array. Reject
+        # non-object syntax before parsing so [{...}] cannot become a request.
+        if (!$requestText.TrimStart().StartsWith('{')) { throw 'The request must be a JSON object.' }
         $request = ConvertFrom-Json -InputObject $requestText -ErrorAction Stop
     } catch { Stop-Bridge 'INVALID_REQUEST' 'RequestBase64 must contain valid UTF-8 JSON of at most 16000 bytes.' }
-    if ($request -isnot [PSCustomObject]) { Stop-Bridge 'INVALID_REQUEST' 'The request must be a JSON object.' }
+    if (!(Test-JsonObject $request)) { Stop-Bridge 'INVALID_REQUEST' 'The request must be a JSON object.' }
     $action = Get-Field $request 'action'
     if (($action -isnot [string]) -or ($action -notin @('processes.list', 'windows.list', 'ui.tree'))) {
         Stop-Bridge 'UNKNOWN_ACTION' 'Supported actions: processes.list, windows.list, ui.tree.'
     }
     $parameters = Get-Field $request 'params' ([PSCustomObject]@{})
-    if ($parameters -isnot [PSCustomObject]) { Stop-Bridge 'INVALID_REQUEST' 'params must be a JSON object.' }
+    if (!(Test-JsonObject $parameters)) { Stop-Bridge 'INVALID_REQUEST' 'params must be a JSON object.' }
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
         Stop-Bridge 'UNSUPPORTED_PLATFORM' 'This guest helper requires Windows.'
     }
