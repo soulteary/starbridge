@@ -28,6 +28,8 @@
 
 请求只能选择已配置的 profile；不能临时指定 exe、工作目录或 shell。额外参数默认禁止，环境覆盖仅允许 `allowed_env` 中的键；请求超时只能缩短 profile 的预算。GUI profile 可设置 `interactive:true`、`show_window:true`。这些配置限定工具入口，应用仍以当前 Windows 用户身份运行。
 
+启动前会用实际 Windows 参数引用规则计算可执行程序、固定参数和额外参数的完整命令行长度。上限为 32767 个 UTF-16 代码单元，包含末尾终止空字符；引号及转义产生的字符也计入。超限返回 `TASK_COMMAND_LINE_TOO_LONG`，不会创建任务目录或启动 worker。
+
 状态目录默认位于同一用户目录的 `tasks/` 下。guest 本地环境变量 `STARBRIDGE_DEV_HOME` 可显式选择另一绝对目录，主要用于隔离测试；请求不能指定状态路径。
 
 ## 启动与观察
@@ -73,6 +75,8 @@ starbridge dev task.output VM-UUID --request output.json
 输出按字节存储，`stream` 可选 `stdout` 或 `stderr`。每次返回 `data_base64`、`offset`、`next_offset`、`eof` 和 `truncated`；客户端解码 Base64 并累计字节，再按应用实际编码处理文本。继续使用返回的 `next_offset`，单次最多 65536 字节。输出可在任务运行期间查询；`eof:true` 表示任务已结束且本流已读完。
 
 每条输出流按 profile 的 `max_output_bytes` 有界落盘，默认 1 MiB，最大 16 MiB；超过后继续排空但丢弃多余字节，并标记 `truncated:true`。响应不回显环境值，预演会隐藏附加参数与环境值。应用自己写到 stdout/stderr 的内容仍属于任务日志。应用启动后即删除含执行参数与环境的临时请求文件，保留身份、状态和有界输出供后续查询；需要保留期限时由使用者清理已完成任务目录。
+
+worker 启动或身份记录失败时，入口会删除临时请求，并终止尚未恢复运行的 worker。
 
 ## 验证
 

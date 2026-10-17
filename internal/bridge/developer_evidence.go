@@ -146,6 +146,12 @@ func prepareEvidencePayload(name, action string, result Result) ([]evidenceArtif
 		if decodeErr != nil || config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > 64000000 {
 			return nil, invalidGuestResponse()
 		}
+		// Header validation alone accepts a PNG with missing or corrupted pixel
+		// data. Decode fully after bounding bytes and dimensions, before staging
+		// any artifact that the manifest could describe as captured evidence.
+		if _, decodeErr := png.Decode(bytes.NewReader(image)); decodeErr != nil {
+			return nil, invalidGuestResponse()
+		}
 		artifacts = append(artifacts, evidenceArtifact{name + ".png", image})
 		delete(data, "png_base64")
 		data["image_file"] = name + ".png"

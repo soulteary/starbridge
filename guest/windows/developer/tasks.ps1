@@ -149,15 +149,25 @@ function Invoke-TaskStart($p) {
     $cap=Get-DevInteger $profile 'max_output_bytes' 1048576 1024 16777216
     $interactive=Get-DevBoolean $profile 'interactive' $false
     if ($interactive -and (([Diagnostics.Process]::GetCurrentProcess().SessionId -eq 0) -or ![Environment]::UserInteractive)) { Stop-Dev 'INTERACTIVE_SESSION_REQUIRED' 'This task profile requires an interactive user desktop.' }
-    $id=[Guid]::NewGuid().ToString('N');$directory=Join-Path (Join-Path $root 'tasks') $id
-    $null=New-Item -ItemType Directory -Path $directory -Force
     $workerPath=Join-Path $script:DevTaskModuleRoot 'workers\task-worker.ps1'
     $powerShell=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     if ([Environment]::Is64BitOperatingSystem -and ![Environment]::Is64BitProcess) { $powerShell=Join-Path $env:SystemRoot 'Sysnative\WindowsPowerShell\v1.0\powershell.exe' }
-    $request=[ordered]@{task_id=$id;profile=$name;executable=[IO.Path]::GetFullPath($executable);cwd=[IO.Path]::GetFullPath($cwd);args=@($arguments);env=$environment;timeout_ms=$timeout;max_output_bytes=$cap;show_window=(Get-DevBoolean $profile 'show_window' $interactive)}
+    $executable=[IO.Path]::GetFullPath($executable)
+    $cwd=[IO.Path]::GetFullPath($cwd)
+    $showWindow=Get-DevBoolean $profile 'show_window' $interactive
     $nativePath=Join-Path $script:DevTaskModuleRoot 'workers\task-native.cs'
     if(!(Test-Path -LiteralPath $workerPath -PathType Leaf) -or !(Test-Path -LiteralPath $nativePath -PathType Leaf)){Stop-Dev 'TASK_INSTALLATION_INVALID' 'Install the complete paired task worker files.'}
     try{Add-Type -Path $nativePath -ErrorAction Stop}catch{Stop-Dev 'TASK_START_FAILED' 'The detached task launcher could not load.'}
+    # Count the complete command after the exact native argv quoting, before
+    # creating state or accepting the detached worker. StringBuilder.Length is
+    # UTF-16 units; CreateProcessW also needs one unit for its terminating NUL.
+    try{$null=[Starbridge.Developer.TaskProcess]::BuildCommandLine($executable,[string[]]$arguments)}catch{
+        if($_.Exception.InnerException -is [ArgumentException]){Stop-Dev 'TASK_COMMAND_LINE_TOO_LONG' 'The quoted task command exceeds the Windows command-line limit.'}
+        Stop-Dev 'TASK_START_FAILED' 'The task command could not be prepared.'
+    }
+    $id=[Guid]::NewGuid().ToString('N');$directory=Join-Path (Join-Path $root 'tasks') $id
+    $null=New-Item -ItemType Directory -Path $directory -Force
+    $request=[ordered]@{task_id=$id;profile=$name;executable=$executable;cwd=$cwd;args=@($arguments);env=$environment;timeout_ms=$timeout;max_output_bytes=$cap;show_window=$showWindow}
     $worker=New-Object Starbridge.Developer.DetachedWorker
     try {
         Write-TaskJson (Join-Path $directory 'request.json') $request

@@ -28,11 +28,21 @@ function Get-DevUiCodePointLength([string]$Text) {
 function Limit-DevUiText($Value, [int]$Max) {
     if ($null -eq $Value) { return $null }
     $text = [string]$Value
+    $result = New-Object Text.StringBuilder
     $offset = 0
     for ($count = 0; ($offset -lt $text.Length) -and ($count -lt $Max); $count++) {
-        if ([char]::IsSurrogatePair($text, $offset)) { $offset += 2 } else { $offset++ }
+        if ([char]::IsSurrogatePair($text, $offset)) {
+            $null = $result.Append($text, $offset, 2)
+            $offset += 2
+        } else {
+            # A provider may return malformed UTF-16. Preserve the code-point
+            # budget while ensuring the JSON value can be encoded as UTF-8.
+            if ([char]::IsSurrogate($text[$offset])) { $null = $result.Append([char]0xFFFD) }
+            else { $null = $result.Append($text[$offset]) }
+            $offset++
+        }
     }
-    return $text.Substring(0, $offset)
+    return $result.ToString()
 }
 
 function Assert-DevUiObject($Object) {
@@ -268,7 +278,10 @@ function Get-DevUiItem($Element, $Info, [string]$NodeId, $ParentId, [int]$Depth)
             $textPattern = $null
             try {
                 if ($Element.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$textPattern)) {
-                    $raw = [string]$textPattern.DocumentRange.GetText(2049)
+                    # GetText bounds UTF-16 string units. Read enough for 2049
+                    # supplementary code points so the 2048-point cap and its
+                    # truncation flag remain correct even for all-emoji text.
+                    $raw = [string]$textPattern.DocumentRange.GetText(4098)
                     $value = Limit-DevUiText $raw 2048
                     $valueTruncated = (Get-DevUiCodePointLength $raw) -gt 2048
                     $valueStatus = 'available'

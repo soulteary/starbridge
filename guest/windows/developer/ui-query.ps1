@@ -1,10 +1,12 @@
 # UI query registration. The worker is isolated so a blocked UIA provider has a
 # hard process deadline. This module never loads or changes the legacy helper.
 function Invoke-DevUiWorker([string]$WorkerName, $Parameters, [int]$TimeoutMs, [bool]$Mutation = $false, [int]$MaxOutputBytes = 4194304) {
-    if ($WorkerName -notmatch '^[a-z-]+\.ps1$') { Stop-Dev 'INTERNAL_ERROR' 'Invalid UI worker name.' }
-    if ($MaxOutputBytes -lt 1024 -or $MaxOutputBytes -gt 6291456) { Stop-Dev 'INTERNAL_ERROR' 'Invalid UI worker output budget.' }
+    $notStartedDetails=$null; $unknownDetails=$null
+    if ($Mutation) { $notStartedDetails=@{outcome='not_started'}; $unknownDetails=@{outcome='unknown'} }
+    if ($WorkerName -notmatch '^[a-z-]+\.ps1$') { Stop-Dev 'INTERNAL_ERROR' 'Invalid UI worker name.' $notStartedDetails }
+    if ($MaxOutputBytes -lt 1024 -or $MaxOutputBytes -gt 6291456) { Stop-Dev 'INTERNAL_ERROR' 'Invalid UI worker output budget.' $notStartedDetails }
     $workerPath = Join-Path $script:DeveloperRoot ('developer\workers\' + $WorkerName)
-    if (!(Test-Path -LiteralPath $workerPath -PathType Leaf)) { Stop-Dev 'UIA_WORKER_UNAVAILABLE' 'Install the complete developer helper directory.' }
+    if (!(Test-Path -LiteralPath $workerPath -PathType Leaf)) { Stop-Dev 'UIA_WORKER_UNAVAILABLE' 'Install the complete developer helper directory.' $notStartedDetails }
     $powerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     if ([Environment]::Is64BitOperatingSystem -and ![Environment]::Is64BitProcess) {
         $powerShell = Join-Path $env:SystemRoot 'Sysnative\WindowsPowerShell\v1.0\powershell.exe'
@@ -25,31 +27,53 @@ function Invoke-DevUiWorker([string]$WorkerName, $Parameters, [int]$TimeoutMs, [
     $child = New-Object Diagnostics.Process
     $child.StartInfo = $start
     try {
-        if (!$child.Start()) { Stop-Dev 'UIA_WORKER_FAILED' 'The UI worker could not start.' }
+        try { $started=$child.Start() }
+        catch { Stop-Dev 'UIA_WORKER_FAILED' 'The UI worker could not start.' $notStartedDetails }
+        if (!$started) { Stop-Dev 'UIA_WORKER_FAILED' 'The UI worker could not start.' $notStartedDetails }
         $stdout = $child.StandardOutput.ReadToEndAsync()
         $stderr = $child.StandardError.ReadToEndAsync()
         if (!$child.WaitForExit($TimeoutMs)) {
             try { $child.Kill(); $null = $child.WaitForExit(2000) } catch { }
-            if ($Mutation) { Stop-Dev 'ACTION_TIMEOUT' 'The UI action outcome is unknown after worker timeout. Inspect application state before retrying.' }
+            if ($Mutation) { Stop-Dev 'ACTION_TIMEOUT' 'The UI action outcome is unknown after worker timeout. Inspect application state before retrying.' $unknownDetails }
             Stop-Dev 'UIA_TIMEOUT' 'UI inspection exceeded timeout_ms; worker termination was attempted.'
         }
         $output = $stdout.GetAwaiter().GetResult()
         $null = $stderr.GetAwaiter().GetResult()
-        if ([Text.Encoding]::UTF8.GetByteCount($output) -gt $MaxOutputBytes) { Stop-Dev 'OUTPUT_LIMIT_EXCEEDED' 'The UI worker exceeded its output budget.' }
+        if ([Text.Encoding]::UTF8.GetByteCount($output) -gt $MaxOutputBytes) { Stop-Dev 'OUTPUT_LIMIT_EXCEEDED' 'The UI worker exceeded its output budget.' $unknownDetails }
         try {
             if (!$output.TrimStart().StartsWith('{')) { throw 'Invalid envelope.' }
             $response = ConvertFrom-Json -InputObject $output -ErrorAction Stop
             if ($response.ok -isnot [bool]) { throw 'Invalid envelope.' }
-        } catch { Stop-Dev 'UIA_WORKER_FAILED' 'The UI worker returned an invalid response.' }
+        } catch { Stop-Dev 'UIA_WORKER_FAILED' 'The UI worker returned an invalid response.' $unknownDetails }
         if (!$response.ok) {
-            if (($response.error.code -isnot [string]) -or ($response.error.message -isnot [string]) -or
-                $response.error.code.Length -gt 80 -or $response.error.message.Length -gt 512) {
-                Stop-Dev 'UIA_WORKER_FAILED' 'The UI worker returned an invalid error.'
+            $errorProperty=$response.PSObject.Properties['error']
+            $workerError=$null
+            if ($null -ne $errorProperty) { $workerError=$errorProperty.Value }
+            if ($null -eq $workerError -or $null -eq $workerError.PSObject.Properties['code'] -or $null -eq $workerError.PSObject.Properties['message'] -or
+                ($workerError.code -isnot [string]) -or ($workerError.message -isnot [string]) -or
+                $workerError.code.Length -gt 80 -or $workerError.message.Length -gt 512) {
+                Stop-Dev 'UIA_WORKER_FAILED' 'The UI worker returned an invalid error.' $unknownDetails
             }
-            Stop-Dev $response.error.code $response.error.message
+            $details=$unknownDetails
+            if ($Mutation) {
+                $property=$workerError.PSObject.Properties['details']
+                if ($null -ne $property -and $null -ne $property.Value) {
+                    $outcome=$property.Value.PSObject.Properties['outcome']
+                    if ($null -ne $outcome -and ($outcome.Value -is [string]) -and $outcome.Value -cin @('not_started','unknown')) {
+                        # Worker details may contain provider/input text. Copy
+                        # only the documented outcome, never the raw object.
+                        $details=@{outcome=$outcome.Value}
+                    }
+                }
+            }
+            Stop-Dev $workerError.code $workerError.message $details
         }
-        if ($child.ExitCode -ne 0) { Stop-Dev 'UIA_WORKER_FAILED' 'The UI worker reported success with a failing exit code.' }
-        return $response.data
+        if ($child.ExitCode -ne 0) { Stop-Dev 'UIA_WORKER_FAILED' 'The UI worker reported success with a failing exit code.' $unknownDetails }
+        $dataProperty=$response.PSObject.Properties['data']
+        if ($null -eq $dataProperty -or $null -eq $dataProperty.Value -or $dataProperty.Value.GetType() -ne [Management.Automation.PSCustomObject]) {
+            Stop-Dev 'UIA_WORKER_FAILED' 'The UI worker returned an invalid data object.' $unknownDetails
+        }
+        return $dataProperty.Value
     } finally { $child.Dispose() }
 }
 

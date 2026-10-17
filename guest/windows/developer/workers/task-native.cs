@@ -69,7 +69,16 @@ namespace Starbridge.Developer {
             }
             result.Append('\\',slashes*2);return result.Append('"').ToString();
         }
+        public static StringBuilder BuildCommandLine(string executable,string[] arguments) {
+            StringBuilder command=new StringBuilder(QuoteArgument(executable));
+            foreach(string arg in arguments)command.Append(' ').Append(QuoteArgument(arg));
+            // CreateProcessW counts UTF-16 code units, including the final NUL.
+            // Use this same builder for preflight and both native launches.
+            if(command.Length>32766)throw new ArgumentException("The Windows command line exceeds its length limit.");
+            return command;
+        }
         public void Start(string executable,string[] arguments,string directory,IDictionary environment,string stdout,string stderr,int cap,bool showWindow) {
+            StringBuilder command=BuildCommandLine(executable,arguments);
             IntPtr outputRead=IntPtr.Zero,outputWrite=IntPtr.Zero,errorRead=IntPtr.Zero,errorWrite=IntPtr.Zero,input=IntPtr.Zero,environmentBlock=IntPtr.Zero,thread=IntPtr.Zero;
             try {
                 Stage="create_job";
@@ -89,7 +98,6 @@ namespace Starbridge.Developer {
                 StringBuilder block=new StringBuilder();foreach(KeyValuePair<string,string> pair in variables)block.Append(pair.Key).Append('=').Append(pair.Value).Append('\0');block.Append('\0');
                 environmentBlock=Marshal.StringToHGlobalUni(block.ToString());
                 STARTUPINFO startup=new STARTUPINFO();startup.cb=Marshal.SizeOf(typeof(STARTUPINFO));startup.flags=0x100|1;startup.show=(short)(showWindow?1:0);startup.input=input;startup.output=outputWrite;startup.error=errorWrite;
-                StringBuilder command=new StringBuilder(QuoteArgument(executable));foreach(string arg in arguments)command.Append(' ').Append(QuoteArgument(arg));
                 PROCESS_INFORMATION info;
                 Stage="create_process";
                 Check(CreateProcess(executable,command,IntPtr.Zero,IntPtr.Zero,true,0x4|0x400|0x8000000,environmentBlock,directory,ref startup,out info));
@@ -159,6 +167,7 @@ namespace Starbridge.Developer {
         static void Check(bool value) { if(!value)throw new Win32Exception(Marshal.GetLastWin32Error()); }
         static void Close(IntPtr value) { if(value!=IntPtr.Zero && value!=new IntPtr(-1))CloseHandle(value); }
         public void Start(string executable,string[] arguments,string directory) {
+            StringBuilder command=TaskProcess.BuildCommandLine(executable,arguments);
             IntPtr input=IntPtr.Zero,output=IntPtr.Zero,error=IntPtr.Zero,list=IntPtr.Zero,handles=IntPtr.Zero;
             bool initialized=false;
             try {
@@ -171,7 +180,6 @@ namespace Starbridge.Developer {
                 handles=Marshal.AllocHGlobal(IntPtr.Size*3);Marshal.WriteIntPtr(handles,0,input);Marshal.WriteIntPtr(handles,IntPtr.Size,output);Marshal.WriteIntPtr(handles,IntPtr.Size*2,error);
                 Check(UpdateProcThreadAttribute(list,0,new IntPtr(0x20002),handles,new IntPtr(IntPtr.Size*3),IntPtr.Zero,IntPtr.Zero));
                 STARTUPINFOEX startup=new STARTUPINFOEX();startup.startup.cb=Marshal.SizeOf(typeof(STARTUPINFOEX));startup.startup.flags=0x100|1;startup.startup.show=0;startup.startup.input=input;startup.startup.output=output;startup.startup.error=error;startup.attributes=list;
-                StringBuilder command=new StringBuilder(TaskProcess.QuoteArgument(executable));foreach(string arg in arguments)command.Append(' ').Append(TaskProcess.QuoteArgument(arg));
                 PROCESS_INFORMATION information;
                 // Suspend until the caller has durably recorded the worker identity.
                 Check(CreateProcess(executable,command,IntPtr.Zero,IntPtr.Zero,true,0x4|0x80000|0x8000000,IntPtr.Zero,directory,ref startup,out information));
