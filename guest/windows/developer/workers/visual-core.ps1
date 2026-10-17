@@ -51,9 +51,16 @@ function Resolve-DevVisualParameters([string]$Name,$Object) {
     if($Name -ceq 'ui.click'){$observation=Resolve-DevVisualObservation (Get-DevUiField $Object 'observation');$identity=$observation}else{$identity=$Object}
     $timeout=Get-DevUiInteger $Object 'timeout_ms' 15000 2000 20000
     $capture=[ordered]@{hwnd=(Get-DevUiField $identity 'hwnd');pid=(Get-DevUiField $identity 'pid');start_time_utc=(Get-DevUiField $identity 'start_time_utc');timeout_ms=$timeout}
-    if($Name -ceq 'ui.click' -and $observation.capture_method -cne 'print_window'){$capture['capture_method']=$observation.capture_method}
-    foreach($key in @('max_bytes','max_pixels','capture_method')){if(Test-DevVisualField $Object $key){$capture[$key]=Get-DevUiField $Object $key}}
+    $fallbackMethod='print_window';if($Name -ceq 'ui.click'){$fallbackMethod=$observation.capture_method}
+    $method=Get-DevUiString $Object 'capture_method' $fallbackMethod 32
+    if($method -cnotin @('print_window','windows_graphics_capture')){Stop-DevUi 'INVALID_ARGUMENT' 'Unsupported visual capture method.'}
+    # The baseline screenshot resolver has an implicit print_window backend.
+    # Consume its explicit selector here; optional backends still require the
+    # installed screenshot resolver to recognize and authorize that method.
+    if($method -cne 'print_window'){$capture['capture_method']=$method}
+    foreach($key in @('max_bytes','max_pixels')){if(Test-DevVisualField $Object $key){$capture[$key]=Get-DevUiField $Object $key}}
     $result=Resolve-DevScreenshotParameters $capture
+    $result['capture_method']=$method
     $result['include_uia']=Get-DevVisualBoolean $Object 'include_uia' $true
     $result['uia_timeout_ms']=Get-DevUiInteger $Object 'uia_timeout_ms' 1500 1000 5000
     if($result.uia_timeout_ms -ge $timeout){Stop-DevUi 'INVALID_ARGUMENT' 'uia_timeout_ms must be smaller than timeout_ms.'}

@@ -161,15 +161,38 @@ func TestVisualMCPRejectsInvalidOptionalBackendAndKeepsOfflinePreview(t *testing
 		{"changed token metadata", func(d map[string]any) { d["observation"].(map[string]any)["dpi"] = 0 }},
 		{"extra pixels", func(d map[string]any) { d["png_base64"] = "never duplicated" }},
 	} {
-		t.Run(change.name, func(t *testing.T) {
-			payload, p, _ := visualMCPFixture(t, "ui.observe")
-			change.fn(payload["data"].(map[string]any))
-			result := developerVisualImageResult(payload, p, "ui.observe")
-			requireCode(t, envelope(t, result), "INVALID_GUEST_RESPONSE")
-			if len(result.Content) != 1 {
-				t.Fatal("invalid response emitted image")
-			}
-		})
+		for _, action := range []string{"ui.observe", "ui.click"} {
+			t.Run(action+"/"+change.name, func(t *testing.T) {
+				payload, p, _ := visualMCPFixture(t, action)
+				// Response corruption must not also alter the caller's observation
+				// through the fixture's intentionally shared original metadata.
+				encoded, _ := json.Marshal(payload)
+				decoder := json.NewDecoder(bytes.NewReader(encoded))
+				decoder.UseNumber()
+				if err := decoder.Decode(&payload); err != nil {
+					t.Fatal(err)
+				}
+				change.fn(payload["data"].(map[string]any))
+				fixture := &developerFixture{invoke: func(context.Context, string, string, map[string]any, bool) (bridge.Result, error) {
+					return payload, nil
+				}}
+				session, ctx := connectDeveloper(t, fixture, ServerOptions{DeveloperTools: true, AllowGuestWrite: action == "ui.click"})
+				result := call(t, session, ctx, "dev."+action, devArgs(accessUUIDA, p))
+				metadata := envelope(t, result)
+				requireCode(t, metadata, "INVALID_GUEST_RESPONSE")
+				failure := metadata["error"].(map[string]any)
+				if action == "ui.click" {
+					if failure["details"].(map[string]any)["outcome"] != "unknown" {
+						t.Fatal("optional backend validation lost submitted click uncertainty")
+					}
+				} else if failure["details"] != nil {
+					t.Fatal("read-only validation gained mutation outcome")
+				}
+				if len(result.Content) != 1 || fixture.calls != 1 {
+					t.Fatal("invalid response emitted image or retried backend")
+				}
+			})
+		}
 	}
 	preview := bridge.Success(map[string]any{"dry_run": true, "argv": []string{"prlctl", "exec", "fixture-vm"}, "mutation": true})
 	result := developerVisualImageResult(preview, map[string]any{}, "ui.click")

@@ -165,12 +165,21 @@ func normalizeDeveloperVisual(action string, p map[string]any) (map[string]any, 
 		return nil, err
 	}
 	capture := map[string]any{"hwnd": identity["hwnd"], "pid": identity["pid"], "start_time_utc": identity["start_time_utc"]}
-	if action == "ui.click" && observation["capture_method"] != "print_window" {
-		// Inherit the actual backend which produced this observation. The
-		// screenshot normalizer rejects unavailable backends before transport.
-		capture["capture_method"] = observation["capture_method"]
+	fallbackMethod := "print_window"
+	if action == "ui.click" {
+		fallbackMethod = observation["capture_method"].(string)
 	}
-	for _, key := range []string{"max_bytes", "max_pixels", "capture_method"} {
+	method, err := uiActionEnum(p, "capture_method", fallbackMethod, "print_window", "windows_graphics_capture")
+	if err != nil {
+		return nil, err
+	}
+	// print_window exists in the baseline screenshot contract, where the method
+	// is implicit. Consume that selector here instead of forwarding an unknown
+	// field; additional backends must be accepted by the installed normalizer.
+	if method != "print_window" {
+		capture["capture_method"] = method
+	}
+	for _, key := range []string{"max_bytes", "max_pixels"} {
 		if value, exists := p[key]; exists {
 			capture[key] = value
 		}
@@ -184,6 +193,7 @@ func normalizeDeveloperVisual(action string, p map[string]any) (map[string]any, 
 	if err != nil {
 		return nil, err
 	}
+	result["capture_method"] = method
 	result["include_uia"], err = visualBoolean(p, "include_uia", true)
 	if err != nil {
 		return nil, err
@@ -329,7 +339,7 @@ func visualWithinRequest(action string, d, p map[string]any) bool {
 	if action == "ui.click" {
 		identity, _ = asObject(p["observation"])
 	}
-	want := map[string]any{"hwnd": identity["hwnd"], "pid": identity["pid"], "start_time_utc": identity["start_time_utc"], "max_bytes": p["max_bytes"], "max_pixels": p["max_pixels"]}
+	want := map[string]any{"hwnd": identity["hwnd"], "pid": identity["pid"], "start_time_utc": identity["start_time_utc"], "max_bytes": p["max_bytes"], "max_pixels": p["max_pixels"], "timeout_ms": p["timeout_ms"]}
 	if method, present := p["capture_method"]; present {
 		want["capture_method"] = method
 	}

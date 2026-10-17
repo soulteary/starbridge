@@ -36,8 +36,17 @@ namespace StarbridgeDeveloperVisual { public static class Native {
 '@
 $script:Checks=0;$script:Clicks=0;$script:Focuses=0;$script:Leases=0;$script:Captures=0;$script:FailPost=$false;$script:IdentityValid=$true;$script:SessionId=7
 function Assert-VisualTest([bool]$Condition,[string]$Label){if(!$Condition){throw $Label};$script:Checks++}
-function Expect-VisualError([scriptblock]$Body,[string]$Code){
-    $script:DevUiErrorCode='';try{& $Body;throw 'Expected visual failure was accepted.'}catch{if($script:DevUiErrorCode -cne $Code){throw}}
+function Expect-VisualError([scriptblock]$Body,[string]$Code,[string]$Label){
+    if($Label -cnotmatch '^[a-z0-9-]{1,64}$'){throw 'Invalid synthetic visual case label.'}
+    $script:DevUiErrorCode='';$rejected=$false
+    try{$null=& $Body}catch{
+        $rejected=$true
+        if($script:DevUiErrorCode -cne $Code){
+            $actual=$script:DevUiErrorCode;if($actual -cnotmatch '^[A-Z][A-Z0-9_]{0,63}$'){$actual='NONE'}
+            throw ('Visual case={0} expected={1} actual={2} type={3} line={4}' -f $Label,$Code,$actual,$_.Exception.GetType().Name,$_.InvocationInfo.ScriptLineNumber)
+        }
+    }
+    if(!$rejected){throw ('Visual case={0} accepted; expected={1}' -f $Label,$Code)}
     $script:Checks++
 }
 function Copy-VisualObject($Object){return (ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $Object -Depth 16 -Compress))}
@@ -69,6 +78,9 @@ function Invoke-DevScreenshotCore($Parameters){
 }
 $identity=[PSCustomObject]@{hwnd='0x123';pid=42;start_time_utc='2026-01-02T03:04:05Z';include_uia=$false}
 $observe=Resolve-DevVisualParameters 'ui.observe' $identity
+Assert-VisualTest ($observe.capture_method -ceq 'print_window') 'Default capture method was not normalized.'
+$explicitIdentity=Copy-VisualObject $identity;$explicitIdentity|Add-Member NoteProperty capture_method 'print_window'
+Assert-VisualTest ((Resolve-DevVisualParameters 'ui.observe' $explicitIdentity).capture_method -ceq 'print_window') 'Explicit print_window rejected the baseline resolver.'
 $first=Invoke-DevVisualCore 'ui.observe' $observe
 Assert-VisualTest ($first.observation.dpi -eq 144 -and $first.observation.rect.x -eq -1000 -and $first.observation.window_rect.x -eq -1008) 'Observation conflated actual capture bounds and window geometry.'
 Assert-DevVisualToken $first.observation 5000
@@ -78,29 +90,43 @@ $point=Get-DevVisualPoint $o (Resolve-DevVisualTarget ([PSCustomObject]@{x=25;y=
 Assert-VisualTest ($point.x -eq -949 -and $point.y -eq -79) 'Scaled point mapping failed on negative-coordinate monitor.'
 $point=Get-DevVisualPoint $o (Resolve-DevVisualTarget ([PSCustomObject]@{x=25;y=10;width=10;height=10;image_width=100;image_height=50}) $o)
 Assert-VisualTest ($point.x -eq -940 -and $point.y -eq -70) 'Rectangle center mapping failed.'
-foreach($target in @(@{x=-1;y=0},@{x=200;y=0},@{x=0;y=0;width=1},@{x=0;y=0;width=$null;height=$null},@{x=199;y=0;width=2;height=1},@{x=0;y=0;unknown=1})){
-    Expect-VisualError {Resolve-DevVisualTarget ([PSCustomObject]$target) $o} 'INVALID_ARGUMENT'
+foreach($case in @(
+    @{label='target-negative';target=@{x=-1;y=0}},
+    @{label='target-outside';target=@{x=200;y=0}},
+    @{label='target-partial-rectangle';target=@{x=0;y=0;width=1}},
+    @{label='target-null-rectangle';target=@{x=0;y=0;width=$null;height=$null}},
+    @{label='target-rectangle-outside';target=@{x=199;y=0;width=2;height=1}},
+    @{label='target-unknown-field';target=@{x=0;y=0;unknown=1}}
+)){
+    $target=$case.target
+    Expect-VisualError {Resolve-DevVisualTarget ([PSCustomObject]$target) $o} 'INVALID_ARGUMENT' $case.label
 }
 $tampered=Copy-VisualObject $first.observation;$tampered.rect.x=-999
-Expect-VisualError {Assert-DevVisualToken (Resolve-DevVisualObservation $tampered) 5000} 'OBSERVATION_INVALID'
-$tampered=Copy-VisualObject $first.observation;$raw=[Convert]::FromBase64String($tampered.token);$raw[8]=$raw[8] -bxor 1;$tampered.token=[Convert]::ToBase64String($raw)
-Expect-VisualError {Assert-DevVisualToken (Resolve-DevVisualObservation $tampered) 5000} 'OBSERVATION_INVALID'
+Expect-VisualError {Assert-DevVisualToken (Resolve-DevVisualObservation $tampered) 5000} 'OBSERVATION_INVALID' 'token-metadata-tampered'
+$tampered=Copy-VisualObject $first.observation;$raw=[Convert]::FromBase64String($tampered.token)
+# Alter the protected tail, not the provider header: header variations need
+# not change the authenticated payload returned by Windows DPAPI.
+$raw[$raw.Length-1]=$raw[$raw.Length-1] -bxor 1;$tampered.token=[Convert]::ToBase64String($raw)
+Expect-VisualError {Assert-DevVisualToken (Resolve-DevVisualObservation $tampered) 5000} 'OBSERVATION_INVALID' 'token-protected-tail-tampered'
 $old=[ordered]@{};foreach($key in $first.observation.Keys){if($key -cne 'token'){$old[$key]=$first.observation[$key]}}
 $old.timestamp=[DateTimeOffset]::UtcNow.AddSeconds(-10).ToString('o');$old.expires_at=([DateTimeOffset]::Parse($old.timestamp)).AddSeconds(30).ToString('o');$old['token']=Protect-DevVisualObservation $old
-Expect-VisualError {Assert-DevVisualToken $old 5000} 'OBSERVATION_EXPIRED'
+Expect-VisualError {Assert-DevVisualToken $old 5000} 'OBSERVATION_EXPIRED' 'token-expired'
 $script:SessionId=8
-Expect-VisualError {Assert-DevVisualToken $first.observation 5000} 'OBSERVATION_SESSION_MISMATCH'
+Expect-VisualError {Assert-DevVisualToken $first.observation 5000} 'OBSERVATION_SESSION_MISMATCH' 'token-session-changed'
 $script:SessionId=7
 $click=[PSCustomObject]@{observation=(Copy-VisualObject $first.observation);target=[PSCustomObject]@{x=25;y=10;image_width=100;image_height=50};focus=$true;wait_ms=0;include_uia=$false}
 $normalized=Resolve-DevVisualParameters 'ui.click' $click
+Assert-VisualTest ($normalized.capture_method -ceq 'print_window') 'Click did not inherit its observation capture method.'
+$explicitClick=Copy-VisualObject $click;$explicitClick|Add-Member NoteProperty capture_method 'print_window'
+Assert-VisualTest ((Resolve-DevVisualParameters 'ui.click' $explicitClick).capture_method -ceq 'print_window') 'Explicit print_window click rejected the baseline resolver.'
 [StarbridgeDeveloperInput.Native]::Geometry.x=-1007
-Expect-VisualError {Invoke-DevVisualCore 'ui.click' $normalized} 'OBSERVATION_GEOMETRY_CHANGED'
+Expect-VisualError {Invoke-DevVisualCore 'ui.click' $normalized} 'OBSERVATION_GEOMETRY_CHANGED' 'window-moved'
 [StarbridgeDeveloperInput.Native]::Geometry.x=-1008
 [StarbridgeDeveloperVisual.Native]::CurrentDpi=192
-Expect-VisualError {Invoke-DevVisualCore 'ui.click' $normalized} 'OBSERVATION_DPI_CHANGED'
+Expect-VisualError {Invoke-DevVisualCore 'ui.click' $normalized} 'OBSERVATION_DPI_CHANGED' 'window-dpi-changed'
 [StarbridgeDeveloperVisual.Native]::CurrentDpi=144
 $script:IdentityValid=$false
-Expect-VisualError {Invoke-DevVisualCore 'ui.click' $normalized} 'WINDOW_IDENTITY_MISMATCH'
+Expect-VisualError {Invoke-DevVisualCore 'ui.click' $normalized} 'WINDOW_IDENTITY_MISMATCH' 'window-identity-changed'
 $script:IdentityValid=$true
 Assert-VisualTest ($script:Clicks -eq 0 -and $script:Focuses -eq 0 -and $script:Leases -eq 0) 'A rejected click changed application state or leaked its lease.'
 $result=Invoke-DevVisualCore 'ui.click' $normalized
@@ -108,13 +134,13 @@ Assert-VisualTest ($script:Clicks -eq 1 -and $script:Focuses -eq 1 -and $script:
 Assert-VisualTest ($result.observation.token -cne $first.observation.token -and $script:Captures -eq 2) 'Click did not produce a new authenticated observation.'
 # Strict comparison is optional: an animation/hover change blocks this mode,
 # while the default flow above does not require byte-identical screen content.
-$strict=Copy-VisualObject $click;$strict.strict_image_match=$true;$strict.focus=$false
+$strict=Copy-VisualObject $click;$strict|Add-Member NoteProperty strict_image_match $true -Force;$strict.focus=$false
 $strict.observation=Copy-VisualObject $result.observation
 $script:Pixels=[byte[]]@(137,80,78,71,1)
-Expect-VisualError {Invoke-DevVisualCore 'ui.click' (Resolve-DevVisualParameters 'ui.click' $strict)} 'OBSERVATION_IMAGE_CHANGED'
+Expect-VisualError {Invoke-DevVisualCore 'ui.click' (Resolve-DevVisualParameters 'ui.click' $strict)} 'OBSERVATION_IMAGE_CHANGED' 'strict-image-changed'
 Assert-VisualTest ($script:Clicks -eq 1) 'Strict mismatch dispatched a click.'
 $script:FailPost=$true;$script:DevUiMutationBegan=$false
-Expect-VisualError {Invoke-DevVisualCore 'ui.click' $normalized} 'POST_OBSERVATION_FAILED'
+Expect-VisualError {Invoke-DevVisualCore 'ui.click' $normalized} 'POST_OBSERVATION_FAILED' 'post-capture-failed'
 Assert-VisualTest ($script:DevUiMutationBegan -and $script:Clicks -eq 2 -and $script:Leases -eq 0) 'Post-capture failure lost unknown mutation semantics.'
 # Exercise actual module UIA degradation against a fake bounded worker. No
 # provider is loaded and its failure must not remove the successful image.

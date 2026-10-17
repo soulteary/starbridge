@@ -136,6 +136,29 @@ func TestVisualObservationAndClickUseOneTransportWithoutRetry(t *testing.T) {
 	}
 }
 
+func TestVisualPrintWindowExplicitAndInheritedOnBaselineScreenshotContract(t *testing.T) {
+	for _, action := range []string{"ui.observe", "ui.click"} {
+		for _, explicit := range []bool{false, true} {
+			p := uiFixtureParams()
+			if action == "ui.click" {
+				p = visualClickFixture(t)
+			}
+			if explicit {
+				p["capture_method"] = "print_window"
+			}
+			normalized, err := normalizeDeveloperVisual(action, p)
+			if err != nil || normalized["capture_method"] != "print_window" {
+				t.Fatalf("%s explicit=%t: %v", action, explicit, err)
+			}
+			f := newFixture(t)
+			f.response.stdout = developerResponse(action, action == "ui.click", visualFixture(t, action))
+			if _, err = f.bridge.Developer(context.Background(), "vm", action, p, action == "ui.click"); err != nil || f.calls != 1 {
+				t.Fatalf("print_window flow failed: %v", err)
+			}
+		}
+	}
+}
+
 func TestVisualPhysicalMappingUsesCaptureBoundaryAndImageGrid(t *testing.T) {
 	o := visualFixture(t, "ui.observe")["observation"].(map[string]any)
 	for _, test := range []struct {
@@ -199,7 +222,10 @@ func TestVisualRejectsInvalidGuestObservationAndUnconfirmedPostImage(t *testing.
 			test.fn(d)
 			f.response.stdout = developerResponse("ui.click", true, d)
 			_, err := f.bridge.Developer(context.Background(), "vm", "ui.click", visualClickFixture(t), true)
-			checkCode(t, err, "INVALID_GUEST_RESPONSE")
+			failure := checkCode(t, err, "INVALID_GUEST_RESPONSE")
+			if failure.Details["outcome"] != "unknown" {
+				t.Fatal("post-click validation lost unknown outcome")
+			}
 			if f.calls != 1 {
 				t.Fatal("click retried")
 			}
@@ -211,5 +237,73 @@ func TestVisualRejectsInvalidGuestObservationAndUnconfirmedPostImage(t *testing.
 	var failure *Error
 	if !errors.As(err, &failure) || failure.Details["outcome"] != "unknown" || f.calls != 1 {
 		t.Fatal("transport timeout lost unknown outcome", err)
+	}
+}
+
+func TestVisualResponseMetadataFailuresPreserveMutationUncertainty(t *testing.T) {
+	for _, action := range []string{"ui.observe", "ui.click"} {
+		for _, test := range []struct {
+			name   string
+			change func(Result)
+		}{
+			{"missing meta", func(r Result) { delete(r, "meta") }},
+			{"protocol", func(r Result) { r["meta"].(map[string]any)["protocol_version"] = "unsupported" }},
+			{"action", func(r Result) { r["meta"].(map[string]any)["action"] = "other.action" }},
+			{"session", func(r Result) { r["meta"].(map[string]any)["session_id"] = 2 }},
+			{"noninteractive", func(r Result) { r["meta"].(map[string]any)["user_interactive"] = false }},
+			{"invalid envelope", func(r Result) { r["ok"] = "true" }},
+		} {
+			t.Run(action+"/"+test.name, func(t *testing.T) {
+				p := uiFixtureParams()
+				if action == "ui.click" {
+					p = visualClickFixture(t)
+				}
+				value, _ := decodeJSON(developerResponse(action, action == "ui.click", visualFixture(t, action)))
+				response, _ := asObject(value)
+				test.change(Result(response))
+				encoded, _ := json.Marshal(response)
+				f := newFixture(t)
+				f.response.stdout = string(encoded)
+				_, err := f.bridge.Developer(context.Background(), "vm", action, p, action == "ui.click")
+				failure := checkCode(t, err, "INVALID_GUEST_RESPONSE")
+				if action == "ui.click" {
+					if failure.Details["outcome"] != "unknown" {
+						t.Fatal("submitted click lost unknown outcome")
+					}
+				} else if failure.Details["outcome"] != nil {
+					t.Fatal("read-only observation gained mutation outcome")
+				}
+				if f.calls != 1 {
+					t.Fatal("validation retried transport")
+				}
+			})
+		}
+	}
+	for _, test := range []struct {
+		name, response, code string
+		exit                 int
+	}{
+		{"invalid JSON", "synthetic invalid JSON", "INVALID_JSON", 0},
+		{"exit mismatch", developerResponse("ui.click", true, visualFixture(t, "ui.click")), "GUEST_EXIT_MISMATCH", 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.response.stdout = test.response
+			f.response.exitCode = test.exit
+			_, err := f.bridge.Developer(context.Background(), "vm", "ui.click", visualClickFixture(t), true)
+			failure := checkCode(t, err, test.code)
+			if failure.Details["outcome"] != "unknown" || f.calls != 1 {
+				t.Fatal("submitted response failure lost uncertainty or retried")
+			}
+		})
+	}
+	for _, dry := range []bool{false, true} {
+		f := newFixture(t)
+		f.bridge.options.DryRun = dry
+		_, err := f.bridge.Developer(context.Background(), "vm", "ui.click", visualClickFixture(t), false)
+		failure := checkCode(t, err, "WRITE_NOT_ALLOWED")
+		if failure.Details["outcome"] != nil || f.calls != 0 {
+			t.Fatal("preflight rejection treated as submitted input")
+		}
 	}
 }

@@ -213,13 +213,21 @@ func newDeveloperServer(backend Backend, definitions []tool) *mcp.Server {
 // Visual actions carry exactly one image inside data.screenshot. Validate their
 // complete contract even for optional backends, then remove bytes from both
 // metadata representations without mutating the backend result.
+func visualFailure(action, message string) *mcp.CallToolResult {
+	var details map[string]any
+	if action == "ui.click" {
+		details = map[string]any{"outcome": "unknown"}
+	}
+	return toolResult(bridge.Failure(bridge.NewError("INVALID_GUEST_RESPONSE", message, details)))
+}
+
 func developerVisualImageResult(payload bridge.Result, params map[string]any, action string) *mcp.CallToolResult {
 	if payload["ok"] != true {
 		return toolResult(payload)
 	}
 	data, ok := payload["data"].(map[string]any)
 	if !ok {
-		return toolResult(bridge.Failure(bridge.NewError("INVALID_GUEST_RESPONSE", "Invalid visual observation.", nil)))
+		return visualFailure(action, "Invalid visual observation.")
 	}
 	_, hasScreenshot := data["screenshot"]
 	_, hasPixels := data["png_base64"]
@@ -233,11 +241,11 @@ func developerVisualImageResult(payload bridge.Result, params map[string]any, ac
 		}
 		normalized, err := spec.Normalize(params)
 		if err != nil || !spec.ValidateResult(data) || (spec.ValidateWithinRequest != nil && !spec.ValidateWithinRequest(data, normalized)) {
-			return toolResult(bridge.Failure(bridge.NewError("INVALID_GUEST_RESPONSE", "Invalid visual observation.", nil)))
+			return visualFailure(action, "Invalid visual observation.")
 		}
 		imageResult := developerImageResult(bridge.Success(data["screenshot"]), normalized)
 		if imageResult.IsError {
-			return imageResult
+			return visualFailure(action, "Visual response image is not a complete PNG within its declared and requested image budgets.")
 		}
 		metadataData := make(map[string]any, len(data))
 		for k, v := range data {
@@ -260,7 +268,7 @@ func developerVisualImageResult(payload bridge.Result, params map[string]any, ac
 		result.Content = append(result.Content, imageResult.Content[len(imageResult.Content)-1])
 		return result
 	}
-	return toolResult(bridge.Failure(bridge.NewError("INVALID_GUEST_RESPONSE", "Unknown visual response action.", nil)))
+	return visualFailure(action, "Unknown visual response action.")
 }
 
 const maxMCPImageBytes = 4 * 1024 * 1024

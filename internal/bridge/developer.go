@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"regexp"
 	"sort"
 )
@@ -51,7 +52,7 @@ func DeveloperActions() []DeveloperAction {
 // Developer runs a registered development action. A mutation requires explicit
 // authorization even for direct Go callers and dry runs. Transport cancellation
 // does not promise that a guest mutation was rolled back or stopped.
-func (b *Bridge) Developer(ctx context.Context, vm, name string, params map[string]any, allowWrite bool) (Result, error) {
+func (b *Bridge) Developer(ctx context.Context, vm, name string, params map[string]any, allowWrite bool) (result Result, err error) {
 	if err := identifier(vm, "VM"); err != nil {
 		return nil, err
 	}
@@ -62,7 +63,7 @@ func (b *Bridge) Developer(ctx context.Context, vm, name string, params map[stri
 	if params == nil {
 		params = map[string]any{}
 	}
-	params, err := action.Normalize(params)
+	params, err = action.Normalize(params)
 	if err != nil {
 		return nil, err
 	}
@@ -102,6 +103,22 @@ func (b *Bridge) Developer(ctx context.Context, vm, name string, params map[stri
 		args = append(args, "-AllowWrite")
 	}
 	payload, err := b.run(ctx, args, false, action.Mutation, true)
+	// Only a submitted visual mutation can have this outcome. A malformed
+	// response is not evidence that input was withheld; retain that uncertainty
+	// through envelope, metadata, session and image validation below.
+	if name == "ui.click" && !b.options.DryRun {
+		defer func() {
+			var failure *Error
+			if errors.As(err, &failure) && (failure.Code == "INVALID_GUEST_RESPONSE" || failure.Code == "INVALID_JSON" || failure.Code == "GUEST_EXIT_MISMATCH") {
+				details := make(map[string]any, len(failure.Details)+1)
+				for key, value := range failure.Details {
+					details[key] = value
+				}
+				details["outcome"] = "unknown"
+				err = NewError(failure.Code, failure.Message, details)
+			}
+		}()
+	}
 	if err != nil {
 		return nil, err
 	}
