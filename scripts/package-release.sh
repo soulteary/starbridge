@@ -32,20 +32,39 @@ commit=$(git rev-parse HEAD)
 dirty=false
 if [ -n "$(git status --porcelain)" ]; then dirty=true; fi
 
+# Only selected, indexed support files belong in a distribution. Read their
+# working-tree contents so tracked local edits still match the dirty build.
+# Keep Git and tar out of a pipeline: either failure must stop packaging.
+git ls-files --cached --error-unmatch -z -- \
+  README.md CONTRIBUTING.md LICENSE THIRD_PARTY_NOTICES.md go.mod \
+  docs examples guest/windows/README.md guest/windows/desktop-bridge.ps1 \
+  tests/windows tests/fixtures > "$staging/support-files"
+xargs -0 sh -c '
+  for source do
+    if [ ! -f "$source" ]; then
+      printf "Tracked package path must be a regular file: %s\n" "$source" >&2
+      exit 1
+    fi
+    component=$source
+    while :; do
+      if [ -L "$component" ]; then
+        printf "Tracked package path must not use a symlink: %s\n" "$source" >&2
+        exit 1
+      fi
+      case "$component" in */*) component=${component%/*} ;; *) break ;; esac
+    done
+  done
+' check-support-files < "$staging/support-files"
+COPYFILE_DISABLE=1 tar -cf "$staging/support.tar" --null --no-recursion -T "$staging/support-files"
+
 for arch in arm64 amd64; do
   name="starbridge_${version}_darwin_${arch}"
   package="$staging/$name"
-  mkdir -p "$package/guest/windows" "$package/tests"
+  mkdir -p "$package"
   CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" go build -trimpath -buildvcs=false \
     -ldflags "-s -w -X github.com/soulteary/starbridge/internal/version.Version=$version" \
     -o "$package/starbridge" ./cmd/starbridge
-  cp guest/windows/desktop-bridge.ps1 "$package/guest/windows/desktop-bridge.ps1"
-  cp guest/windows/README.md "$package/guest/windows/README.md"
-  cp README.md CONTRIBUTING.md LICENSE THIRD_PARTY_NOTICES.md go.mod "$package/"
-  cp -R docs examples "$package/"
-  # Keep documented Windows acceptance commands usable, including the smoke
-  # script's parameter-contract fixture, without shipping the Go source tree.
-  cp -R tests/windows tests/fixtures "$package/tests/"
+  tar -xf "$staging/support.tar" -C "$package"
   cat > "$package/INSTALL.txt" <<'INSTALL'
 Starbridge for macOS
 
@@ -68,7 +87,7 @@ INSTALL
   printf 'version=%s\ncommit=%s\ndirty=%s\nos=darwin\narch=%s\nguest_protocol=1\n' \
     "$version" "$commit" "$dirty" "$arch" > "$package/BUILD.txt"
   "$root/scripts/check-package-docs.sh" "$package"
-  tar -czf "$output/$name.tar.gz" -C "$staging" "$name"
+  COPYFILE_DISABLE=1 tar -czf "$output/$name.tar.gz" -C "$staging" "$name"
 done
 (cd "$output" && shasum -a 256 "starbridge_${version}_darwin_arm64.tar.gz" "starbridge_${version}_darwin_amd64.tar.gz") > "$output/checksums.txt"
 printf 'Created paired macOS packages and checksums in %s\n' "$output"
