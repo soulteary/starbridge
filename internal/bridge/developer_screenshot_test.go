@@ -65,6 +65,7 @@ func TestDeveloperScreenshotRejectsArgumentsBeforeTransport(t *testing.T) {
 		{"max_bytes", 1023}, {"max_bytes", developerScreenshotMaxBytes + 1}, {"max_bytes", true},
 		{"max_pixels", 0}, {"max_pixels", developerScreenshotMaxPixels + 1}, {"max_pixels", 1.5},
 		{"timeout_ms", 999}, {"timeout_ms", 20001},
+		{"capture_method", "auto"}, {"capture_method", "desktop"}, {"capture_method", nil}, {"capture_method", 1},
 	} {
 		t.Run(test.key+"/"+stringValueForTest(test.value), func(t *testing.T) {
 			params := uiFixtureParams()
@@ -107,6 +108,70 @@ func TestDeveloperScreenshotDryRunIsReadOnlyAndHasNoHostOutputPath(t *testing.T)
 	if normalized["hwnd"] != "0x123" || !responseInteger(normalized["max_bytes"], developerScreenshotMaxBytes, developerScreenshotMaxBytes) {
 		t.Fatal("capture budgets were not normalized")
 	}
+	if normalized["capture_method"] != "print_window" {
+		t.Fatal("default capture backend changed")
+	}
+}
+
+func TestDeveloperScreenshotExplicitBackendAndNoFallback(t *testing.T) {
+	for _, method := range []string{"print_window", "windows_graphics_capture"} {
+		for _, returned := range []string{"print_window", "windows_graphics_capture"} {
+			t.Run(method+"/"+returned, func(t *testing.T) {
+				params := uiFixtureParams()
+				params["capture_method"] = method
+				data := screenshotFixtureData(t, 16, 8)
+				data["capture_method"] = returned
+				if returned == "windows_graphics_capture" {
+					data["warnings"] = []any{"compositor-frame-best-effort", "bgra8-hdr-may-clip", "system-capture-border-may-appear"}
+				}
+				f := newFixture(t)
+				f.response.stdout = screenshotFixtureResponse(t, data)
+				_, err := f.bridge.Developer(context.Background(), "fixture-vm", "screenshot.capture", params, false)
+				if method == returned && err != nil {
+					t.Fatal(err)
+				}
+				if method != returned && err == nil {
+					t.Fatal("response silently changed the requested backend")
+				}
+				if f.calls != 1 {
+					t.Fatal("capture retried another backend")
+				}
+			})
+		}
+	}
+}
+
+func TestDeveloperScreenshotCapabilitiesSeparateSessionAndAPISupport(t *testing.T) {
+	data := map[string]any{
+		"probe_scope": "os-api-device", "os_build": 26100, "session_id": 0, "user_interactive": false, "capture_requires_input_desktop": true,
+		"methods": []any{
+			map[string]any{"capture_method": "print_window", "available": true, "reason": "available"},
+			map[string]any{"capture_method": "windows_graphics_capture", "available": true, "reason": "available"},
+		},
+	}
+	if !validDeveloperScreenshotCapabilities(data) {
+		t.Fatal("API support incorrectly requires an interactive session")
+	}
+	wgc := data["methods"].([]any)[1].(map[string]any)
+	wgc["available"], wgc["reason"] = false, "WGC_DEVICE_UNAVAILABLE"
+	if !validDeveloperScreenshotCapabilities(data) {
+		t.Fatal("unsupported hardware was not a valid capability report")
+	}
+	wgc["reason"] = map[string]any{"private": "synthetic"}
+	if validDeveloperScreenshotCapabilities(data) {
+		t.Fatal("capability accepted an arbitrary diagnostic object")
+	}
+	for _, input := range []map[string]any{{"hwnd": "0x123"}, {"timeout_ms": 999}, {"timeout_ms": true}} {
+		if _, err := normalizeDeveloperScreenshotCapabilities(input); err == nil {
+			t.Fatal("invalid capability request was accepted")
+		}
+	}
+	f := newFixture(t)
+	f.bridge.options.DryRun = true
+	result, err := f.bridge.Developer(context.Background(), "fixture-vm", "screenshot.capabilities", nil, false)
+	if err != nil || result["ok"] != true || f.calls != 0 {
+		t.Fatalf("read-only capability dry-run failed: %v", err)
+	}
 }
 
 func TestDeveloperScreenshotValidatesCompleteImageAndIdentity(t *testing.T) {
@@ -125,6 +190,7 @@ func TestDeveloperScreenshotValidatesCompleteImageAndIdentity(t *testing.T) {
 		{"wrong dimensions", func(d map[string]any) { d["width"] = 17 }, false},
 		{"wrong rectangle", func(d map[string]any) { d["rect"].(map[string]any)["height"] = 9 }, false},
 		{"time reversed", func(d map[string]any) { d["capture_started_at"] = "2026-01-02T03:06:00Z" }, false},
+		{"time budget exceeded", func(d map[string]any) { d["timestamp"] = "2026-01-02T03:05:15Z" }, false},
 		{"logical coordinates", func(d map[string]any) { d["coordinate_space"] = "logical" }, false},
 		{"silent best effort", func(d map[string]any) { d["warnings"] = []any{} }, false},
 		{"unexpected private path", func(d map[string]any) { d["path"] = "fixture.png" }, false},
