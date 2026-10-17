@@ -80,7 +80,7 @@ try {
             else{
                 $temporary=$statePath+'.'+[Guid]::NewGuid().ToString('N')+'.tmp'
                 [IO.File]::WriteAllText($temporary,(ConvertTo-Json -InputObject $state -Compress -Depth 12),(New-Object Text.UTF8Encoding($false)))
-                if([IO.File]::Exists($statePath)){[IO.File]::Replace($temporary,$statePath,$null)}else{[IO.File]::Move($temporary,$statePath)}
+                if([IO.File]::Exists($statePath)){[IO.File]::Replace($temporary,$statePath,[System.Management.Automation.Language.NullString]::Value)}else{[IO.File]::Move($temporary,$statePath)}
             }
         }catch{}
     }

@@ -18,7 +18,7 @@ function Write-TaskJson([string]$Path,$Value) {
     try {
         $json=ConvertTo-Json -InputObject $Value -Depth 12 -Compress
         [IO.File]::WriteAllText($temporary,$json,(New-Object Text.UTF8Encoding($false)))
-        if ([IO.File]::Exists($Path)) { [IO.File]::Replace($temporary,$Path,$null) } else { [IO.File]::Move($temporary,$Path) }
+        if ([IO.File]::Exists($Path)) { [IO.File]::Replace($temporary,$Path,[System.Management.Automation.Language.NullString]::Value) } else { [IO.File]::Move($temporary,$Path) }
     } finally { if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) } }
 }
 function Read-TaskJson([string]$Path) {
