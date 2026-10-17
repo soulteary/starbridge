@@ -73,11 +73,19 @@ func normalizeWorkflow(p map[string]any) (map[string]any, error) {
 }
 
 func LoadDevelopmentProfile(path string) (*DevelopmentProfile, string, error) {
+	initial, err := os.Lstat(path)
+	if err != nil || !initial.Mode().IsRegular() || initial.Size() > 65536 {
+		return nil, "", NewError("INVALID_PROFILE", "Profile must be a regular file within 64 KiB.", nil)
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, "", NewError("INVALID_PROFILE", "Cannot read project profile.", nil)
 	}
 	defer file.Close()
+	opened, statErr := file.Stat()
+	if statErr != nil || !opened.Mode().IsRegular() || !os.SameFile(initial, opened) {
+		return nil, "", NewError("INVALID_PROFILE", "Profile changed while being opened.", nil)
+	}
 	data, err := io.ReadAll(io.LimitReader(file, 65537))
 	if err != nil || len(data) > 65536 || uniqueRecyclePolicyKeys(data) != nil {
 		return nil, "", NewError("INVALID_PROFILE", "Profile must be unique-key JSON within 64 KiB.", nil)
