@@ -20,13 +20,15 @@ $script:DeveloperScriptPath = $PSCommandPath
 $script:DevStartedAt = [DateTime]::UtcNow
 $script:DevFailureCode = 'INTERNAL_ERROR'
 $script:DevFailureMessage = 'The developer helper could not complete the request.'
+$script:DevFailureDetails = $null
 $script:DevActionName = ''
 $script:DevMutation = $false
 $script:DevActions = New-Object 'Collections.Generic.Dictionary[string,object]' ([StringComparer]::Ordinal)
 
-function Stop-Dev([string]$Code, [string]$Message) {
+function Stop-Dev([string]$Code, [string]$Message, $Details = $null) {
     $script:DevFailureCode = $Code
     $script:DevFailureMessage = $Message
+    $script:DevFailureDetails = $Details
     throw $Message
 }
 
@@ -94,15 +96,15 @@ function Register-DeveloperAction {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
         [Parameter(Mandatory = $true)][scriptblock]$Handler,
-        [bool]$Mutation = $false,
-        [bool]$Interactive = $false,
+        [switch]$Mutation,
+        [switch]$Interactive,
         [string]$Description = ''
     )
     if (($Name -cnotmatch '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$') -or $script:DevActions.ContainsKey($Name)) {
         Stop-Dev 'INVALID_MODULE' 'The developer action registration is invalid or duplicated.'
     }
     if ($script:DevActions.Count -ge 256) { Stop-Dev 'INVALID_MODULE' 'Too many developer actions are installed.' }
-    $script:DevActions.Add($Name, [PSCustomObject]@{ handler=$Handler; mutation=$Mutation; interactive=$Interactive; description=$Description })
+    $script:DevActions.Add($Name, [PSCustomObject]@{ handler=$Handler; mutation=[bool]$Mutation; interactive=[bool]$Interactive; description=$Description })
 }
 
 function New-DevMetadata {
@@ -157,9 +159,15 @@ try {
     Write-DevResponse ([ordered]@{ ok=$true; data=$data; meta=(New-DevMetadata) })
     exit 0
 } catch {
+    $sourceFile = [IO.Path]::GetFileName($_.InvocationInfo.ScriptName)
+    if ($sourceFile -notmatch '^[a-zA-Z0-9_-]+\.ps1$') { $sourceFile = '[module]' }
+    $parameterName = ''
+    $parameterProperty = $_.Exception.PSObject.Properties['ParameterName']
+    if ($null -ne $parameterProperty -and [string]$parameterProperty.Value -match '^[a-zA-Z_]{1,64}$') { $parameterName = [string]$parameterProperty.Value }
+    $diagnostic = [ordered]@{ exception_type=$_.Exception.GetType().Name; parameter=$parameterName; source_file=$sourceFile; source_line=$_.InvocationInfo.ScriptLineNumber }
     Write-DevResponse ([ordered]@{
         ok=$false
-        error=[ordered]@{ code=$script:DevFailureCode; message=$script:DevFailureMessage }
+        error=[ordered]@{ code=$script:DevFailureCode; message=$script:DevFailureMessage; details=$script:DevFailureDetails; diagnostic=$diagnostic }
         meta=(New-DevMetadata)
     })
     exit 1
