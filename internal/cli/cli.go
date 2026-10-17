@@ -459,6 +459,7 @@ Actions:
 
 Action options may appear before or after VM. Delete, forced stop, and snapshot
 restore require the exact VM identifier in --confirm unless --dry-run is used.
+Recycle with --policy requires a VM UUID; display names are rejected even in dry runs.
 `
 	}
 	if c.area == "guest" && c.action == "" {
@@ -479,6 +480,9 @@ max-nodes=300, timeout-ms=10000. UI inspection requires an interactive desktop.
 	case "serve":
 		return "Usage: starbridge [global options] serve [--allow-vm-write] [--access-policy FILE]\n\nServe local MCP tools over stdio. VM mutations are disabled by default.\nOptional access policy limits VMs by UUID and tools by name.\nCannot be combined with --dry-run. Diagnostics go to stderr.\n"
 	case "vm":
+		if c.action == "recycle" {
+			return "Usage: starbridge [global options] vm recycle VM [--policy FILE] [--mode stop|restore|delete] [--snapshot ID] [--confirm VM]\n\nWith --policy, VM and all policy vms keys must be UUIDs, not display names.\nUUID case and paired braces are normalized for matching; --confirm must repeat the original input exactly.\nDry runs stay offline. Without --policy, VM names remain supported.\n"
+		}
 		usage := map[string]string{
 			"list": "list", "info": "info VM", "start": "start VM", "stop": "stop VM [--force] [--confirm VM]",
 			"suspend": "suspend VM", "resume": "resume VM", "delete": "delete VM [--confirm VM]",

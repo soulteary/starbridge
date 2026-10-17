@@ -325,7 +325,8 @@ func TestRecycleBlankPolicyNeverReachesTransport(t *testing.T) {
 			{"empty-equals", []string{"--policy=", "vm"}},
 			{"spaces", []string{"vm", "--policy", "   "}},
 			{"unicode-whitespace", []string{"--policy=\t\r\n\u2003", "vm"}},
-			{"with-mode-override", []string{"vm", "--policy", "", "--mode", "delete", "--confirm", "vm"}},
+			{"with-mode-override", []string{"DisplayName", "--policy", "", "--mode", "delete", "--confirm", "DisplayName"}},
+			{"equals-with-mode-override", []string{"DisplayName", "--policy=", "--mode", "delete", "--confirm", "DisplayName"}},
 		} {
 			t.Run(fmt.Sprintf("%s/dry-run=%t", tt.name, dryRun), func(t *testing.T) {
 				marker := filepath.Join(t.TempDir(), "invoked")
