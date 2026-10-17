@@ -123,6 +123,8 @@ codex mcp add starbridge -- /absolute/project/bin/starbridge serve
 
 配置示例见 [Codex MCP](../examples/codex-mcp.toml)。本版不通过 MCP 暴露删除、快照恢复或任意 shell。
 
+同一 MCP 服务最多并行执行 4 个后端调用，生命周期写操作按目标协调；排队请求支持取消。名称与 UUID 别名、CLI 进程边界详见 [MCP 并发与取消](MCP_CONCURRENCY.md)。
+
 ChatGPT 接入取决于所用环境是否能启动本地 stdio 工具；普通网页聊天不能直接访问 Mac 上的本地进程。当前没有实现远程 HTTP 接入、鉴权或发布插件。
 
 ## 常见检查
