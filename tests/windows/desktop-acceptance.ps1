@@ -36,9 +36,10 @@ function Invoke-Query([string]$Action,$Parameters) {
         }
         $output = $outputTask.GetAwaiter().GetResult()
         $errors = $errorTask.GetAwaiter().GetResult()
-        Assert-Desktop ($child.ExitCode -eq 0) "$Action failed: $output $errors"
-        $response = ConvertFrom-Json -InputObject $output
-        Assert-Desktop ($response.ok -eq $true) "$Action did not return success: $output"
+        Assert-Desktop ($child.ExitCode -eq 0) "$Action failed; raw output and diagnostics withheld."
+        try { $response = ConvertFrom-Json -InputObject $output -ErrorAction Stop }
+        catch { throw "$Action returned invalid JSON; raw response withheld." }
+        Assert-Desktop ($response.ok -eq $true) "$Action did not return success; raw response withheld."
         return $response
     } finally { $child.Dispose() }
 }
@@ -73,7 +74,7 @@ try {
     Assert-Desktop ($root.data.nodes.Count -eq 1) 'Root-only query must contain exactly one node.'
     Assert-Desktop ($root.data.nodes[0].depth -eq 0) 'Root depth must be zero.'
     Write-Host 'PASS: known PID, HWND, title, rectangle, Unicode button and bounded UIA root.'
-    Write-Host ('Session: ' + $tree.meta.session_id + '; user: ' + $tree.meta.user + '; desktop: ' + $tree.meta.desktop)
+    Write-Host ('Fixture session: ' + $tree.meta.session_id)
 } finally {
     try {
         if ($null -ne $fixture) {

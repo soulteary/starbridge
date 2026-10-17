@@ -59,8 +59,9 @@ function Invoke-SampleProcess([string]$Arguments) {
         $stdout = $outputTask.GetAwaiter().GetResult()
         $stderr = $errorTask.GetAwaiter().GetResult()
         $timer.Stop()
-        if (![string]::IsNullOrWhiteSpace($stderr)) { throw ('Unexpected sample stderr: ' + $stderr) }
-        $response = ConvertFrom-Json -InputObject $stdout -ErrorAction Stop
+        if (![string]::IsNullOrWhiteSpace($stderr)) { throw 'Unexpected sample stderr (raw diagnostics withheld).' }
+        try { $response = ConvertFrom-Json -InputObject $stdout -ErrorAction Stop }
+        catch { throw 'The sample returned invalid JSON (raw response withheld).' }
         if ($response.ok -isnot [bool]) { throw 'The sample returned an invalid response envelope.' }
         if (($response.ok -and $process.ExitCode -ne 0) -or (!$response.ok -and $process.ExitCode -ne 1)) {
             throw 'The sample response and process exit code disagree.'
@@ -153,6 +154,6 @@ foreach ($empty in @($missing, $filtered)) {
 if (!$Hwnd) { Write-Host 'UIA samples skipped: supply -Hwnd from the current interactive desktop to measure tree queries.' }
 if ($OutputPath) {
     $script:Rows.ToArray() | Export-Csv -LiteralPath $OutputPath -NoTypeInformation -Encoding UTF8
-    Write-Host ('Saved raw timing samples to ' + $OutputPath)
+    Write-Host 'Saved timing samples to the requested output file.'
 }
 $script:Rows.ToArray()
