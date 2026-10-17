@@ -1,0 +1,30 @@
+name: Dedicated desktop integration
+on:
+  workflow_dispatch:
+    inputs:
+      fixture_environment_confirmed:
+        description: Use only a provisioned disposable Windows fixture VM and its logged-in test desktop
+        type: boolean
+        required: true
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: starbridge-dedicated-desktop
+  cancel-in-progress: false
+jobs:
+  desktop:
+    if: inputs.fixture_environment_confirmed
+    runs-on: [self-hosted, macOS, starbridge-desktop]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Exercise only the configured synthetic fixture
+        env:
+          STARBRIDGE_RUN_DESKTOP_ACCEPTANCE: '1'
+          STARBRIDGE_TEST_VM_UUID: ${{ secrets.STARBRIDGE_TEST_VM_UUID }}
+          STARBRIDGE_TEST_DEVELOPER_SCRIPT: ${{ vars.STARBRIDGE_TEST_DEVELOPER_SCRIPT }}
+        run: go test -tags=desktopintegration ./tests/integration -run TestDeveloperDesktopWorkflow -count=1 -timeout 5m
