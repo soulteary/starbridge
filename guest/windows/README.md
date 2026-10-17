@@ -1,230 +1,197 @@
 # Windows guest helper
 
-`desktop-bridge.ps1` is a read-only Windows desktop inspector. It returns process
-names, top-level window rectangles, and the controls exposed by Microsoft UI
-Automation (UIA). It does not open a port, execute arbitrary commands supplied in
-JSON, click controls, read text/value patterns, or request elevation.
+`desktop-bridge.ps1` reads processes, top-level windows, and controls exposed by
+Microsoft UI Automation (UIA). It opens no network port and provides no arbitrary
+command, click, input, screenshot, text/value-pattern, or elevation API.
+
+[Installation and CLI use](../../docs/USAGE.md) ·
+[Validation guide](../../docs/ACCEPTANCE.md) ·
+[Desktop test fixture](../../docs/DESKTOP_TESTING.md)
 
 ## Runtime and session
 
-- Windows with Windows PowerShell 5.1 and the built-in .NET Framework UI Automation
-  assemblies. The entry script can also be launched from PowerShell 7 on Windows;
-  `ui.tree` deliberately uses the Windows PowerShell worker.
-- Run it in the logged-in desktop user's interactive session. `meta.session_id`
-  and `meta.interactive` describe the helper's context; they do **not** prove
-  that it can see the desired user's desktop.
-- A Parallels Tools `prlctl exec` command may run under a different account,
-  session, or desktop. Process enumeration succeeding does not verify desktop
-  access. Check the returned session, find a known application in `windows.list`,
-  and inspect its controls before treating that transport as usable. If it runs
-  in a service/session 0 context, a future per-user agent and authenticated local
-  IPC transport are required. This MVP does not install such an agent.
-- Locked desktops, secure UAC desktops, elevated applications, and applications
-  without a usable accessibility provider can return incomplete trees or errors.
-  This helper does not change UAC, UIAccess, or desktop security settings.
+Windows PowerShell 5.1 and the built-in .NET Framework UI Automation assemblies
+are required. The entry script can also run in PowerShell 7 on Windows; UIA uses
+an isolated Windows PowerShell worker.
 
-## Invocation
+Run desktop queries in the logged-in user's interactive session. `windows.list`
+and `ui.tree` reject Session 0 and noninteractive contexts with
+`INTERACTIVE_SESSION_REQUIRED`. The session metadata, desktop name, and a
+successful process query do not prove access to the intended visible desktop.
+Check a known window and its controls through the actual Parallels transport.
+Locked desktops, secure UAC desktops, elevated applications, and missing or
+incomplete accessibility providers may prevent inspection. The helper does not
+change UAC, UIAccess, or desktop security settings.
 
-Pass Base64 of a UTF-8 JSON object using `-RequestBase64`. Base64 is a transport
-encoding, not encryption. The JSON has only an action and its parameters:
+## Request and response
+
+Pass Base64 of a UTF-8 JSON object using `-RequestBase64`. `action` is required;
+`params` is an object and defaults to `{}`. Base64 is encoding, not encryption.
 
 ```powershell
 $request = @{ action = 'windows.list'; params = @{ limit = 100 } } | ConvertTo-Json -Compress
 $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($request))
 & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass `
-  -File 'C:\Starbridge\desktop-bridge.ps1' -RequestBase64 $encoded
+  -File 'C:\ProgramData\Starbridge\desktop-bridge.ps1' -RequestBase64 $encoded
 ```
 
-`-ExecutionPolicy Bypass` applies only to this invocation. An organization policy
-can still block script execution. Install only a copy you have reviewed. The
-helper's internal UIA worker uses the same process-scoped setting.
+`-ExecutionPolicy Bypass` is process-scoped; organization policy can still block
+execution. Requests are limited to 16,000 decoded bytes and 24,000 Base64 characters.
 
-The host accepts integer-valued JSON numbers such as `12.0` and `1.2e1` using exact decimal validation, then sends canonical integers (`12`) and explicit defaults. The helper transport accepts only canonical integer tokens, not decimal/exponent tokens or numeric strings. This keeps Windows PowerShell 5.1 double conversion out of the public numeric contract. Direct helper callers must normalize numbers before sending them.
+The host accepts exact integer-valued JSON numbers such as `12.0` and `1.2e1`,
+then sends ordinary integers (`12`) and explicit defaults. The helper accepts
+only integer tokens, not decimal/exponent tokens or numeric strings. Direct
+callers must normalize numbers before sending them. Name-filter and managed
+text limits count Unicode code points: an emoji counts as one, and truncation
+preserves complete surrogate pairs. Win32 title/class buffers instead count
+UTF-16 code units.
 
-Valid invocations write exactly one compact JSON response to stdout as UTF-8.
-Success exits `0`; an error exits `1` and returns a bounded public error message.
-The host rejects ambiguous envelopes containing both `data` and `error`, and
-requires nonempty string `error.code` and `error.message` on failure. Successful
-`data` must be an object: process/window lists require their named array, boolean
-`truncated` and integer `limit`; UI trees require the node and warning arrays,
-snapshot identity, configured bounds and limit flags. Required item identities,
-coordinates and state fields are type-checked. Extra fields remain compatible.
-Returned list/node counts and node depths must respect the declared bounds.
-Declared bounds cannot exceed the host's normalized request, including defaults;
-the helper may report stricter bounds.
-PowerShell's own startup or parameter-binding errors can occur before the script
-runs, so callers must also handle a nonzero exit with no JSON.
+Each completed invocation writes one compact UTF-8 JSON response to stdout.
+Success exits `0`; a helper error exits `1`:
 
 ```json
-{"ok":true,"data":{"windows":[],"truncated":false,"limit":100,"dpi_awareness":"per_monitor_v2","coordinate_space":"guest-screen-physical-pixels","rect_source":"GetWindowRect"},"meta":{"protocol_version":"1","action":"windows.list","timestamp":"2026-10-17T00:00:00.0000000Z","duration_ms":100,"session_id":1,"interactive":true,"user_interactive":true,"read_only":true}}
+{"ok":true,"data":{"processes":[],"truncated":false,"limit":500},"meta":{"protocol_version":"1","action":"processes.list","timestamp":"2026-10-18T00:00:00.0000000Z","duration_ms":100,"user":"EXAMPLE\\User","session_id":1,"interactive":true,"user_interactive":true,"desktop":null,"coordinate_space":null,"read_only":true}}
 ```
 
 ```json
 {"ok":false,"error":{"code":"WINDOW_NOT_FOUND","message":"No window with this hwnd is available in the current session."}}
 ```
 
+Success `meta` contains the protocol version (`"1"`), requested action, UTC
+`timestamp`, `duration_ms`, `user`, `session_id`, `interactive` and its equivalent
+`user_interactive`, `desktop` (string or `null`), `coordinate_space`, and
+`read_only:true`. The desktop name describes the calling thread, not necessarily
+the visible input desktop. Process-only coordinates are `null`. UIA metadata
+comes from the worker, so its duration excludes outer-process startup.
+
+The host rejects envelopes with both `data` and `error`, missing required fields,
+or invalid field types. Failure needs nonempty string `error.code` and
+`error.message`; successful `data` is an object matching the selected action.
+Returned counts and depths must fit declared bounds, and declared bounds cannot
+exceed the normalized host request. Extra fields are allowed. PowerShell startup
+or parameter-binding failures can occur before the helper runs; callers must
+also handle a nonzero exit with no JSON.
+
 ## Actions
 
 ### `processes.list`
 
 ```json
-{"action":"processes.list","params":{"limit":200,"pid":0,"name":"notepad","include_path":false}}
+{"action":"processes.list","params":{"limit":500,"name":"notepad","include_path":false}}
 ```
 
-`limit` defaults to `500` and is bounded to `1..1000`. `pid` is optional; `0`
-selects all processes. `name` is an optional case-insensitive substring of the
-process name, capped at 256 characters. It is not a wildcard or regular
-expression. Both filters apply when supplied. Text limits count Unicode code points, so a supplementary character such as an emoji counts as one character. Truncation preserves complete surrogate pairs.
+`limit` defaults to `500`, range `1..1000`. Optional `pid` filters one process;
+the host accepts `1..2147483647`, while the direct helper also accepts `0` for no
+PID filter. Omit `pid` to list all processes through either interface. Optional
+`name` is a case-insensitive substring, at most 256 code points; both filters
+apply when supplied. `include_path` defaults to `false`.
 
-`data.processes` contains `{pid,name,session_id,start_time_utc,identity_status,path,path_status}`
-objects sorted by PID. Session and start-time fields are `null` if unavailable;
-`identity_status` is `partial` in that case. Start time can help a later client
-distinguish recycled PIDs, but every snapshot is still subject to races.
-`path` defaults to `null`. With `include_path:true`, protected, inaccessible, or
-exited processes can have `path_status:"unavailable"`; process command lines and
-environment variables are never retrieved. `data.truncated` indicates an extra
-matching process was omitted because of the limit.
+`data` contains `processes`, boolean `truncated`, and integer `limit`. Processes
+are sorted by PID; an absent or exited requested PID yields an empty array.
+Each item contains:
+
+- `pid`, `name` (up to 512 code points).
+- `session_id`, `start_time_utc`: `null` when unavailable. `identity_status` is
+  `available` when both were read, otherwise `partial`.
+- `path`: `null` unless requested and readable, capped at 2048 code points.
+  `path_status` is `not_requested`, `available`, or `unavailable`.
+
+`truncated:true` means an extra matching process was omitted. Process command
+lines and environment variables are not read. Start time can help identify
+reused PIDs; the result remains a snapshot subject to races.
 
 ### `windows.list`
 
 ```json
-{"action":"windows.list","params":{"limit":200,"pid":0,"include_hidden":false}}
+{"action":"windows.list","params":{"limit":500,"include_hidden":false}}
 ```
 
-`limit` and `pid` have the same bounds as above. Only windows satisfying
-`IsWindowVisible` are returned unless `include_hidden:true` is supplied. Visible
-here means the Win32 visibility flag; it does not guarantee that the window is
-unoccluded, on the current virtual desktop, or visibly painted.
+`limit` and `pid` use the process-list rules. `include_hidden` defaults to
+`false`, returning only windows whose Win32 visibility flag is set. This does
+not prove that a window is unoccluded, painted, or on the current virtual desktop.
 
-`data.windows` contains
-`{hwnd,pid,process_name,title,class_name,is_visible,rect}`. Handles are strings such
-as `"0x30A52"` so JavaScript callers do not lose integer precision. Titles are
-capped at 512 characters. A rectangle is `{x,y,width,height}` and can have
-negative coordinates on monitors to the left or above the primary display.
+`data` contains `windows`, `truncated`, `limit`, `dpi_awareness`,
+`coordinate_space`, and `rect_source:"GetWindowRect"`. Each window contains
+`hwnd`, `pid`, `process_name` (possibly `null`), `title`, `class_name`,
+`is_visible`, and `rect:{x,y,width,height}`. HWNDs are strings such as `"0x30A52"`;
+title/class buffers are capped at 512/256 UTF-16 code units.
 
-`EnumWindows` enumerates top-level desktop-app windows, not all child controls or
-every application surface. Rectangles come from `GetWindowRect`, which can include
-invisible resize borders. A per-monitor DPI context is attempted first; if that
-cannot be established, `coordinate_space` explicitly reports
-`guest-screen-dpi-context-dependent-pixels`. These are Windows guest coordinates, not
-macOS screen or Parallels viewer coordinates.
+Enumeration covers top-level desktop-app windows, not child controls or every
+application surface. `GetWindowRect` may include invisible resize borders.
+Coordinates are `guest-screen-physical-pixels` when a per-monitor DPI context
+is established, otherwise `guest-screen-dpi-context-dependent-pixels`. Negative
+coordinates are valid on monitors left of or above the primary display. These
+are Windows guest coordinates, not macOS or Parallels viewer coordinates.
 
 ### `ui.tree`
 
-Obtain a fresh handle from `windows.list` first:
+Obtain a fresh HWND from `windows.list`:
 
 ```json
-{"action":"ui.tree","params":{"hwnd":"0x30A52","max_depth":4,"max_nodes":250,"timeout_ms":10000}}
+{"action":"ui.tree","params":{"hwnd":"0x30A52","max_depth":6,"max_nodes":300,"timeout_ms":10000}}
 ```
 
-`hwnd` is required and must be a nonzero decimal or `0x` hexadecimal string.
-The host accepts ASCII decimal or hexadecimal strings in `1..0x7fffffffffffffff`,
-including leading zeroes and an uppercase `0X` prefix. Before calling this helper,
-it sends a lowercase `0x` hexadecimal value without leading zeroes. For example,
-`000000000000000000001` becomes `0x1`. Direct helper callers should use this short
-form; the helper bounds raw input to 20 decimal digits or 16 hexadecimal digits.
-`max_depth` defaults to `6`, range `0..12`; the root is depth `0`. `max_nodes`
-defaults to `300`, range `1..1000`. `timeout_ms` defaults to `10000`, range
-`1000..20000`, and covers worker startup plus inspection.
+- `hwnd` is required. The host accepts ASCII decimal or `0x`/`0X` hexadecimal
+  strings in `1..0x7fffffffffffffff`, including leading zeroes, then sends
+  lowercase hexadecimal without leading zeroes (`000000000000000000001` becomes
+  `0x1`). Direct helper input is limited to 20 decimal or 16 hexadecimal digits;
+  use the same short form. The handle must fit the Windows process's pointer size.
+- `max_depth`: default `6`, range `0..12`; the root has depth `0`.
+- `max_nodes`: default `300`, range `1..1000`, including the root.
+- `timeout_ms`: default `10000`, range `1000..20000`, covering worker startup
+  and inspection. Timeout returns `UIA_TIMEOUT` after attempting worker termination.
+  Clients must not use the private `-UiWorker` switch, which bypasses that timeout.
 
-The response contains a flat, depth-first `data.nodes` array. Each node has:
+`data` contains `hwnd`, `snapshot_id`, `view:"control"`, `nodes`, `warnings`,
+`max_nodes`, `max_depth`, `node_limit_reached`, `depth_limit_reached`,
+`coordinate_space:"guest-screen-physical-pixels"`, and `dpi_awareness`.
+`nodes` is a flat, depth-first Control View tree beginning with the requested root:
 
 ```json
 {"node_id":"n000002","parent_id":"n000001","depth":1,"runtime_id":[42,1234,7],"name":"Save","control_type":"Button","automation_id":"SaveButton","class_name":"Button","framework_id":"Win32","pid":1200,"rect":{"x":480,"y":320,"width":90,"height":30},"is_enabled":true,"is_offscreen":false,"is_password":false}
 ```
 
-The array uses UIA's **Control View**. It includes the requested window root.
-`snapshot_id` identifies the observation; `node_id` is unique only within that
-observation. `runtime_id` is an opaque UIA identifier, may be `null`, and is not a
-durable selector across application or UI lifetimes. `automation_id` may be empty
-or repeated. Refresh before a later action; this MVP intentionally exposes no UI
-mutation API.
-
-UIA rectangles are physical screen coordinates by the API's contract; an empty
-or unusable rectangle is `null`. `IsOffscreen:false` and a nonempty rectangle do
-not guarantee that a point can be clicked. A custom-drawn app, game, remote canvas,
-or provider with missing accessibility information may expose only its outer
-window. The helper does not invent button positions or use OCR.
+`node_id` is unique within its `snapshot_id`; the root's `parent_id` is `null`.
+`runtime_id` is an opaque integer array or `null`, not a durable selector.
+`automation_id` may be empty or repeated. Names and automation IDs are capped at
+512 code points, class names at 256, and framework IDs at 128. Refresh before
+using an identifier: HWNDs, PIDs, and UIA IDs may disappear or be reused.
 
 `node_limit_reached` means additional nodes were omitted. `depth_limit_reached`
-means at least one returned node reached the configured depth, without probing
-whether that node has children. Up to 16 deduplicated warning codes describe
-elements lost or denied while taking the snapshot. Names and IDs are capped at
-512 characters; the helper never retrieves ValuePattern or TextPattern content.
+means a returned node reached the configured depth; it does not prove that node
+has children. `warnings` contains up to 16 deduplicated codes:
+`runtime_id_unavailable`, `element_unavailable_or_access_denied`,
+`children_unavailable_or_access_denied`, or `siblings_unavailable_or_access_denied`.
 
-An isolated `powershell.exe -Mta` process makes all UIA calls. If a provider blocks
-inside COM, the parent attempts to terminate that worker and returns
-`UIA_TIMEOUT`; an in-loop elapsed-time check alone would not stop a stuck provider.
-The private `-UiWorker` switch is an implementation detail and must not be called
-directly by clients, since it bypasses the parent timeout.
+UIA rectangles are physical screen pixels; empty or unusable rectangles are
+`null`. Neither `is_offscreen:false` nor a nonempty rectangle proves clickability.
+Custom-drawn apps, games, remote canvases, or incomplete accessibility providers
+may expose only an outer window. No OCR or ValuePattern/TextPattern content is read.
 
-## Bounds and public errors
+## Errors and validation
 
-Requests accept at most 16,000 decoded bytes and 24,000 Base64 characters. List
-output, tree depth, node count, and displayed text lengths have fixed caps.
-Unknown actions return `UNKNOWN_ACTION`; malformed fields return
-`INVALID_REQUEST`. Other errors include `UNSUPPORTED_PLATFORM`,
-`WINDOW_NOT_FOUND`, `INTERACTIVE_SESSION_REQUIRED`, `UIA_UNAVAILABLE`, `UIA_TIMEOUT`, `UIA_WORKER_UNAVAILABLE`,
-`UIA_WORKER_FAILED`, and `INTERNAL_ERROR`. Raw exception messages and credential
-values are not included in errors.
+Helper errors are `UNKNOWN_ACTION`, `INVALID_REQUEST`, `UNSUPPORTED_PLATFORM`,
+`INTERACTIVE_SESSION_REQUIRED`, `WINDOW_NOT_FOUND`, `UIA_UNAVAILABLE`,
+`UIA_TIMEOUT`, `UIA_WORKER_UNAVAILABLE`, `UIA_WORKER_FAILED`, or `INTERNAL_ERROR`.
+Errors omit raw exceptions. Successful metadata and UI content can still reveal
+user names, application/document titles, labels, and requested executable paths.
 
-`windows.list` and `ui.tree` reject session 0 and noninteractive contexts with
-`INTERACTIVE_SESSION_REQUIRED`. Metadata also
-reports `user`, `interactive` (also `user_interactive`), `desktop` (if obtainable), and `coordinate_space`
-(`null` for process-only data). The desktop name describes the calling thread
-and does not establish that it is the currently visible input desktop.
+See [validation and acceptance](../../docs/ACCEPTANCE.md) for automated check
+coverage, and [the desktop fixture](../../docs/DESKTOP_TESTING.md) for visible
+window/UIA checks. Automated checks live in
+[`guest-smoke.ps1`](../../tests/windows/guest-smoke.ps1) and
+[`parameter-contract.ps1`](../../tests/windows/parameter-contract.ps1).
 
-The metadata and UI strings can reveal application names, document titles,
-labels, and requested executable paths. The calling host should show or retain
-only the data needed for the user's requested task.
+For timings, run [`guest-performance.ps1`](../../tests/windows/guest-performance.ps1)
+in Windows PowerShell 5.1. `-Hwnd` samples a fresh window's UIA tree at node limits
+`1,25,100,250,1000`; `-OutputPath` saves CSV. `wall_ms` includes process startup and
+output, while `helper_ms` uses metadata duration. Compare the same environment
+and window; the script does not launch a VM or application or assert a speedup.
 
-## Validation status and Windows smoke check
+## API references
 
-This implementation was authored on macOS. Windows native calls, UI Automation,
-PowerShell execution, mixed-DPI behavior, Windows on Arm, and the interactive
-session behavior of `prlctl exec` have **not** been runtime-verified here.
-
-Before relying on this helper, run it directly in a Windows interactive session:
-
-1. Start Notepad manually. Request `processes.list` with `name:"notepad"`; repeat
-   with its `pid` and `include_path:true`.
-2. Request `windows.list` for that PID. Check the title and bounds against the
-   visible Notepad window. Move it to a second display with a different scale and
-   repeat the rectangle check.
-3. Pass that handle to `ui.tree`; look for the actual labels and enabled states
-   exposed by that version of Notepad. Check `max_nodes:1` and `max_depth:0` produce
-   only the root and the appropriate limit flags.
-4. Close Notepad and retry the old handle; expect `WINDOW_NOT_FOUND` or
-   `UIA_UNAVAILABLE` when it closes during inspection. Handles can be reused by
-   Windows, so do not retain them as permanent application identifiers.
-5. Check invalid Base64, an unknown action, and out-of-range limits produce one
-   JSON error with exit code `1`. Confirm the caller handles `UIA_TIMEOUT` without
-   retrying indefinitely.
-6. Repeat the known-window check through the Parallels transport and compare
-   `session_id`, `user`, and `desktop` with the interactive run. A successful process list alone is not
-   evidence that UI inspection through that transport works.
-
-## Query timing samples
-
-Run `tests/windows/guest-performance.ps1` in Windows PowerShell 5.1 to collect
-fresh-process startup, all-process, and targeted-PID timings. The script also
-checks that a live PID is returned alone and that missing PIDs or a mismatched
-name produce empty arrays. It does not launch a VM or an application.
-
-Pass `-Hwnd` from a fresh `windows.list` response in the same interactive session
-to sample UIA with node limits `1,25,100,250,1000`; `-OutputPath` saves the raw
-samples as CSV. `wall_ms` includes the PowerShell process and helper output,
-while `helper_ms` is the helper metadata duration (the worker duration for UIA).
-Compare the same window and environment before and after a change; tree size,
-provider behavior, and startup caches can affect timings. No measured speedup is
-claimed until these samples have been collected on Windows.
-
-## Microsoft API references
-
-- [EnumWindows: top-level desktop window enumeration](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-enumwindows)
-- [GetWindowRect: DPI virtualization and invisible resize borders](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getwindowrect)
-- [UI Automation bounding rectangles: physical screen coordinates](https://learn.microsoft.com/en-us/dotnet/api/system.windows.automation.automationelement.boundingrectangleproperty)
-- [UI Automation and screen scaling](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-screenscaling)
-- [UI Automation threading and MTA guidance](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-threading)
-- [UI Automation runtime IDs](https://learn.microsoft.com/en-us/dotnet/api/system.windows.automation.automationelement.getruntimeid)
-- [UIPI and UIAccess security boundaries](https://learn.microsoft.com/en-us/windows/security/threat-protection/security-policy-settings/user-account-control-allow-uiaccess-applications-to-prompt-for-elevation-without-using-the-secure-desktop)
+- [EnumWindows](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-enumwindows)
+- [GetWindowRect and DPI virtualization](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getwindowrect)
+- [UIA physical screen coordinates](https://learn.microsoft.com/en-us/dotnet/api/system.windows.automation.automationelement.boundingrectangleproperty)
+- [UIA runtime IDs](https://learn.microsoft.com/en-us/dotnet/api/system.windows.automation.automationelement.getruntimeid)
+- [UIPI and UIAccess](https://learn.microsoft.com/en-us/windows/security/threat-protection/security-policy-settings/user-account-control-allow-uiaccess-applications-to-prompt-for-elevation-without-using-the-secure-desktop)
