@@ -1,0 +1,40 @@
+{
+  "defaults": [
+    {"action":"processes.list","input":{},"canonical":{"limit":500,"include_path":false}},
+    {"action":"windows.list","input":{},"canonical":{"limit":500,"include_hidden":false}},
+    {"action":"ui.tree","input":{"hwnd":"1"},"canonical":{"hwnd":"1","max_depth":6,"max_nodes":300,"timeout_ms":10000}}
+  ],
+  "public_integer_cases": [
+    {"name":"integer","input":"12","valid":true,"canonical":12},
+    {"name":"decimal integer","input":"12.0","valid":true,"canonical":12},
+    {"name":"exponent integer","input":"1.2e1","valid":true,"canonical":12},
+    {"name":"negative exponent integer","input":"120e-1","valid":true,"canonical":12},
+    {"name":"boundary","input":"1e3","valid":true,"canonical":1000},
+    {"name":"fraction","input":"12.1","valid":false},
+    {"name":"fraction beyond float precision","input":"1000.000000000000000000001","valid":false},
+    {"name":"below minimum","input":"0.0","valid":false},
+    {"name":"above maximum","input":"1000.1e1","valid":false},
+    {"name":"huge exponent","input":"1e999999999999999999999999999999999999","valid":false},
+    {"name":"tiny exponent","input":"1e-999999999999999999999999999999999999","valid":false},
+    {"name":"string","input":"\"12\"","valid":false},
+    {"name":"boolean","input":"true","valid":false},
+    {"name":"null","input":"null","valid":false}
+  ],
+  "transport_integer_cases": [
+    {"name":"canonical integer","input":"12","valid":true,"canonical":12},
+    {"name":"maximum","input":"1000","valid":true,"canonical":1000},
+    {"name":"below minimum","input":"0","valid":false},
+    {"name":"above maximum","input":"1001","valid":false},
+    {"name":"decimal is not canonical","input":"12.0","valid":false},
+    {"name":"exponent is not canonical","input":"1.2e1","valid":false},
+    {"name":"string","input":"\"12\"","valid":false},
+    {"name":"boolean","input":"true","valid":false}
+  ],
+  "text_cases": [
+    {"name":"ascii boundary","unit":"a","repeat":256,"valid":true},
+    {"name":"CJK boundary","unit":"桥","repeat":256,"valid":true},
+    {"name":"supplementary boundary","unit":"😀","repeat":256,"valid":true},
+    {"name":"supplementary overlong","unit":"😀","repeat":257,"valid":false},
+    {"name":"mixed boundary","unit":"桥😀","repeat":128,"valid":true}
+  ]
+}

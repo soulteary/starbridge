@@ -11,6 +11,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/soulteary/starbridge/internal/bridge"
+	"github.com/soulteary/starbridge/internal/contract"
 	"github.com/soulteary/starbridge/internal/version"
 )
 
@@ -40,7 +41,7 @@ type tool struct {
 func tools(allowWrite bool) []tool {
 	vm := argument{kind: "string", required: true, maxLength: 512}
 	pid := argument{kind: "integer", nullable: true, min: 1, max: 2147483647}
-	limit := argument{kind: "integer", min: 1, max: 1000, fallback: 500}
+	limit := argument{kind: "integer", min: 1, max: 1000, fallback: contract.DefaultListLimit}
 	result := []tool{
 		{name: "vm_list", description: "List all Parallels virtual machines and their observed states.", arguments: map[string]argument{}},
 		{name: "vm_info", description: "Read VM information. Prefer UUID over mutable display names.", arguments: map[string]argument{"vm": vm}},
@@ -50,8 +51,8 @@ func tools(allowWrite bool) []tool {
 		{name: "guest_windows", action: "windows.list", description: "Read visible top-level Windows windows, HWNDs, titles and screen rectangles.", arguments: map[string]argument{"vm": vm, "pid": pid, "limit": limit}},
 		{name: "guest_ui_tree", action: "ui.tree", description: "Read a bounded UI Automation tree. HWND comes from guest_windows; IDs are snapshot-local.", arguments: map[string]argument{
 			"vm": vm, "hwnd": {kind: "string", required: true},
-			"max_depth": {kind: "integer", min: 0, max: 12, fallback: 6},
-			"max_nodes": {kind: "integer", min: 1, max: 1000, fallback: 300},
+			"max_depth": {kind: "integer", min: 0, max: 12, fallback: contract.DefaultMaxDepth},
+			"max_nodes": {kind: "integer", min: 1, max: 1000, fallback: contract.DefaultMaxNodes},
 		}},
 	}
 	if allowWrite {
@@ -93,7 +94,7 @@ func inputSchema(arguments map[string]argument) map[string]any {
 }
 
 // decodeArguments does explicit validation because Server.AddTool delegates input
-// handling to us. UseNumber keeps 1 distinct from 1.0 and avoids HWND/PID rounding.
+// handling to us. UseNumber preserves decimal precision before exact validation.
 func decodeArguments(raw json.RawMessage, arguments map[string]argument) (map[string]any, error) {
 	invalid := func(message string) (map[string]any, error) {
 		return nil, bridge.NewError("INVALID_ARGUMENT", message, nil)
@@ -144,10 +145,11 @@ func decodeArguments(raw json.RawMessage, arguments map[string]argument) (map[st
 			if !ok {
 				return invalid(key + " must be an integer.")
 			}
-			integer, err := number.Int64()
-			if err != nil || integer < arg.min || integer > arg.max {
+			integer, exact := contract.JSONInteger(number)
+			if !exact || integer < arg.min || integer > arg.max {
 				return invalid(fmt.Sprintf("%s must be an integer in [%d, %d].", key, arg.min, arg.max))
 			}
+			input[key] = integer
 		default:
 			return invalid("Unsupported argument type.")
 		}

@@ -229,12 +229,12 @@ func TestValidation(t *testing.T) {
 	if identifier("Windows 中文", "VM") != nil {
 		t.Fatal("rejected unicode")
 	}
-	for _, value := range []any{true, false, float64(1), "1", 0, 1001, json.Number("1.0")} {
+	for _, value := range []any{true, false, float64(1), "1", 0, 1001, json.Number("1.1")} {
 		if boundedInt(value, 1, 1000, "limit") == nil {
 			t.Fatalf("accepted %#v", value)
 		}
 	}
-	for _, value := range []any{1, int64(1000), json.Number("1000")} {
+	for _, value := range []any{1, int64(1000), json.Number("1000"), json.Number("12.0"), json.Number("1.2e1")} {
 		if err := boundedInt(value, 1, 1000, "limit"); err != nil {
 			t.Fatal(err)
 		}
@@ -332,7 +332,7 @@ func TestGuestProtocolAndSessionMetadata(t *testing.T) {
 	for _, change := range []struct {
 		field string
 		value any
-	}{{"protocol_version", "2"}, {"protocol_version", 1}, {"action", "windows.list"}, {"session_id", -1}, {"session_id", true}, {"session_id", "1"}, {"session_id", json.Number("1.0")}, {"user_interactive", 1}, {"user_interactive", "true"}, {"user_interactive", nil}} {
+	}{{"protocol_version", "2"}, {"protocol_version", 1}, {"action", "windows.list"}, {"session_id", -1}, {"session_id", true}, {"session_id", "1"}, {"session_id", json.Number("1.1")}, {"user_interactive", 1}, {"user_interactive", "true"}, {"user_interactive", nil}} {
 		metadata := map[string]any{}
 		for key, value := range valid {
 			metadata[key] = value

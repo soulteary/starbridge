@@ -39,6 +39,8 @@ $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($request))
 can still block script execution. Install only a copy you have reviewed. The
 helper's internal UIA worker uses the same process-scoped setting.
 
+The host accepts integer-valued JSON numbers such as `12.0` and `1.2e1` using exact decimal validation, then sends canonical integers (`12`) and explicit defaults. The helper transport accepts only canonical integer tokens, not decimal/exponent tokens or numeric strings. This keeps Windows PowerShell 5.1 double conversion out of the public numeric contract. Direct helper callers must normalize numbers before sending them.
+
 Valid invocations write exactly one compact JSON response to stdout as UTF-8.
 Success exits `0`; an error exits `1` and returns a bounded public error message.
 PowerShell's own startup or parameter-binding errors can occur before the script
@@ -60,10 +62,10 @@ runs, so callers must also handle a nonzero exit with no JSON.
 {"action":"processes.list","params":{"limit":200,"pid":0,"name":"notepad","include_path":false}}
 ```
 
-`limit` defaults to `200` and is bounded to `1..1000`. `pid` is optional; `0`
+`limit` defaults to `500` and is bounded to `1..1000`. `pid` is optional; `0`
 selects all processes. `name` is an optional case-insensitive substring of the
 process name, capped at 256 characters. It is not a wildcard or regular
-expression. Both filters apply when supplied.
+expression. Both filters apply when supplied. Text limits count Unicode code points, so a supplementary character such as an emoji counts as one character. Truncation preserves complete surrogate pairs.
 
 `data.processes` contains `{pid,name,session_id,start_time_utc,identity_status,path,path_status}`
 objects sorted by PID. Session and start-time fields are `null` if unavailable;
@@ -107,8 +109,8 @@ Obtain a fresh handle from `windows.list` first:
 ```
 
 `hwnd` is required and must be a nonzero decimal or `0x` hexadecimal string.
-`max_depth` defaults to `4`, range `0..12`; the root is depth `0`. `max_nodes`
-defaults to `250`, range `1..1000`. `timeout_ms` defaults to `10000`, range
+`max_depth` defaults to `6`, range `0..12`; the root is depth `0`. `max_nodes`
+defaults to `300`, range `1..1000`. `timeout_ms` defaults to `10000`, range
 `1000..20000`, and covers worker startup plus inspection.
 
 The response contains a flat, depth-first `data.nodes` array. Each node has:
