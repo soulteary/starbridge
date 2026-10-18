@@ -44,7 +44,7 @@ Windows 功能还需要 Parallels Tools 和同版本 helper。按[安装与使�
 - [MCP 开发工具](docs/MCP_DEVELOPER.md) · [VM 与动作授权](docs/MCP_ACCESS.md) · [并发与取消](docs/MCP_CONCURRENCY.md)。
 - [架构与能力边界](docs/ARCHITECTURE.md) · [Windows 基础 helper 协议](guest/windows/README.md)。
 - [验证与验收](docs/ACCEPTANCE.md) · [桌面查询验收](docs/DESKTOP_TESTING.md) · [开发工作流验收](docs/DEVELOPER_ACCEPTANCE.md)。
-- [参与贡献](CONTRIBUTING.md) · [构建与发布](docs/RELEASING.md)。
+- [0.1.0 版本说明](docs/releases/v0.1.0.md) · [参与贡献](CONTRIBUTING.md) · [构建与发布](docs/RELEASING.md)。
 
 ## 许可
 

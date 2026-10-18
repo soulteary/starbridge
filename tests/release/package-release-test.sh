@@ -262,30 +262,80 @@ cat > "$temporary/bin/gh" <<'FAKE_GH'
 #!/bin/sh
 set -eu
 printf '%s\n' "$@" > "$FAKE_GH_LOG"
+printf '%s\n' called >> "$FAKE_GH_CALLS"
+capture_notes=false
+for argument do
+  if [ "$capture_notes" = true ]; then
+    cat "$argument" > "$FAKE_GH_NOTES"
+    capture_notes=false
+  elif [ "$argument" = --notes-file ]; then
+    capture_notes=true
+  fi
+done
 FAKE_GH
 chmod +x "$temporary/bin/gh"
-mkdir -p "$temporary/publish/dist"
-touch "$temporary/publish/dist/amd64.tar.gz" "$temporary/publish/dist/arm64.tar.gz" \
-  "$temporary/publish/dist/checksums.txt"
+publish_root="$temporary/publish with spaces"
+mkdir -p "$publish_root/dist" "$publish_root/docs/releases"
+touch "$publish_root/dist/amd64 fixture.tar.gz" "$publish_root/dist/arm64 fixture.tar.gz" \
+  "$publish_root/dist/checksums.txt"
+printf 'Other version notes must not be selected.\n' > "$publish_root/docs/releases/other-version.md"
+cat > "$temporary/release-notes" <<'RELEASE_NOTES'
+# Synthetic release notes
+
+发布说明保留 Unicode、空格和原始换行。
+Literal shell text: $(must-not-run) `must-not-run` "$not_an_environment_value".
+RELEASE_NOTES
 publish_checks=0
-for release_case in \
-    v1.2.3:stable v1.2.3-rc.1:pre v1.2.3-alpha.beta.1:pre \
-    v1.2.3-0:pre v1.2.3--alpha:pre v1.2.3+build.7:stable \
-    v1.2.3+build-alpha:stable v1.2.3+-:stable v1.2.3-rc.1+build-alpha:pre; do
-  release_tag=${release_case%:*}
-  release_kind=${release_case##*:}
-  (cd "$temporary/publish" && RELEASE_TAG="$release_tag" FAKE_GH_LOG="$temporary/publish-args" \
+check_publish() {
+  release_tag=$1
+  release_kind=$2
+  notes_kind=$3
+  notes_path="docs/releases/$release_tag.md"
+  case "$notes_kind" in
+    missing) rm -f "$publish_root/$notes_path" ;;
+    provided) cp "$temporary/release-notes" "$publish_root/$notes_path" ;;
+    empty) : > "$publish_root/$notes_path" ;;
+  esac
+  rm -f "$temporary/publish-args" "$temporary/publish-calls" "$temporary/published-notes"
+  (cd "$publish_root" && RELEASE_TAG="$release_tag" FAKE_GH_LOG="$temporary/publish-args" \
+    FAKE_GH_CALLS="$temporary/publish-calls" FAKE_GH_NOTES="$temporary/published-notes" \
     sh "$temporary/publish-step.sh")
   {
     printf '%s\n' release create "$release_tag"
     if [ "$release_kind" = pre ]; then printf '%s\n' --prerelease; fi
-    printf '%s\n' --verify-tag --generate-notes --title "Starbridge $release_tag" \
-      dist/amd64.tar.gz dist/arm64.tar.gz dist/checksums.txt
+    printf '%s\n' --verify-tag
+    if [ "$notes_kind" = missing ]; then
+      printf '%s\n' --generate-notes
+    else
+      printf '%s\n' --notes-file "$notes_path"
+    fi
+    printf '%s\n' --title "Starbridge $release_tag" \
+      'dist/amd64 fixture.tar.gz' 'dist/arm64 fixture.tar.gz' dist/checksums.txt
   } > "$temporary/expected-publish-args"
   cmp "$temporary/expected-publish-args" "$temporary/publish-args"
+  printf 'called\n' > "$temporary/expected-publish-calls"
+  cmp "$temporary/expected-publish-calls" "$temporary/publish-calls"
+  if [ "$notes_kind" = missing ]; then
+    [ ! -e "$temporary/published-notes" ]
+  else
+    cmp "$publish_root/$notes_path" "$temporary/published-notes"
+  fi
   publish_checks=$((publish_checks + 1))
+}
+for release_case in \
+    v1.2.3:stable v1.2.3-rc.1:pre v1.2.3-alpha.beta.1:pre \
+    v1.2.3-0:pre v1.2.3--alpha:pre v1.2.3+build.7:stable \
+    v1.2.3+build-alpha:stable v1.2.3+-:stable v1.2.3-rc.1+build-alpha:pre; do
+  for notes_kind in missing provided empty; do
+    check_publish "${release_case%:*}" "${release_case##*:}" "$notes_kind"
+  done
+done
+# Isolate shell quoting from the upstream SemVer/tag validation. This synthetic
+# value is never sent to GitHub or accepted as a package version.
+for notes_kind in missing provided empty; do
+  check_publish 'synthetic tag with spaces' stable "$notes_kind"
 done
 printf 'Release packaging checks passed: %s version/argument cases; paired archives, checksums and documentation links verified.\n' "$checks"
 printf '%s\n' 'Tracked-file packaging checks passed: ignored/untracked exclusion, dirty changes, index edits and unsafe-file rejection.'
 printf '%s\n' 'Release toolchain checks passed: binary metadata and all three notice version declarations match; five mismatch cases rejected.'
-printf 'Release publication argument checks passed: %s stable/prerelease cases using the workflow command block.\n' "$publish_checks"
+printf 'Release publication checks passed: %s argument/notes cases using one workflow create call; exact, empty and absent notes and paths with spaces verified.\n' "$publish_checks"

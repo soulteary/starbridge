@@ -1,4 +1,4 @@
-# 发布配套安装包
+# 构建与发布安装包
 
 本页描述源码打包与发布流程，不表示仓库已经提供可下载的 Release 资产。没有与目标版本对应的资产时，从源码构建；以后下载资产时，也应核对版本、配套 helper 与校验和。
 
@@ -30,13 +30,30 @@ shasum -a 256 -c checksums.txt
 
 维护者发布前应核对目标提交的[普通 Tests 工作流](https://github.com/soulteary/starbridge/actions/workflows/test.yml)，其中包含全部 Windows developer 合成 contracts。真实 Parallels、桌面输入、视觉点击和 WGC 窗体捕获按[验收指南](ACCEPTANCE.md)分别记录；未执行的环境保持待验收，不用合成结果或 opt-in 跳过记录代替。
 
-推送 `v` 前缀版本标签会触发 [Release 工作流](https://github.com/soulteary/starbridge/actions/workflows/release.yml)。其当前自动门槛为：
+只有推送 `v` 前缀版本标签才会触发 [Release 工作流](https://github.com/soulteary/starbridge/actions/workflows/release.yml)，创建或合并 PR 不会发布。自动门槛为：
 
 1. macOS 使用 `.go-version` 工具链执行打包契约、Go 竞态与静态检查。
-2. Windows PowerShell 执行 `guest-smoke.ps1`，其中包含共享参数契约。这个发布 job 没有执行普通 Tests 中的全部 developer contracts，也没有运行真实桌面验收。
-3. 上述 job 成功后，构建两种架构的包，核对二进制工具链、第三方声明、文档相对链接，并发布归档与校验和。标签版本仍需通过打包脚本的 SemVer 校验。
+2. Windows PowerShell 5.1 执行 `guest-smoke.ps1`，再通过共享入口 `tests/windows/run-developer-contracts.ps1` 执行全部 developer 合成 contracts，并解析 Windows 测试脚本。共享入口与普通 Tests 工作流使用同一组选取规则，不运行 opt-in 真实桌面或 VM 验收。
+3. 两项检查均成功后，构建两种架构的包，核对二进制工具链、第三方声明、文档相对链接，并发布归档与校验和。标签版本仍需通过打包脚本的 SemVer 校验。
 
 带预发布标识的标签（如 `v1.2.3-rc.1`）会创建 GitHub prerelease。仅构建元数据含连字符（如 `v1.2.3+build-alpha`）仍按稳定版发布。
+
+## 版本说明与标签
+
+在版本 PR 中准备 `docs/releases/版本标签.md`，例如 [v0.1.0 说明](releases/v0.1.0.md)。工作流优先将 `docs/releases/$RELEASE_TAG.md` 原样作为 Release 正文；该文件缺失时才使用 GitHub 自动生成的说明。正文中的源码、文档和下载链接应指向对应标签，不应引用准备阶段的本地构建或旧 CI 结果。
+
+先合并包含版本说明与发布工作流的 PR，再从最新 `origin/main` 创建并推送新标签，确保标签包含这些改动。不要直接推送准备阶段已存在的本地预览标签，也不要覆盖已存在的标签。以下命令在新目录检出 `main`，并在标签创建失败时停止，不会继续推送旧标签；执行前应确认版本 PR 已进入 `origin/main`：
+
+```sh
+set -eu
+git clone --branch main --single-branch https://github.com/soulteary/starbridge.git starbridge-release
+cd starbridge-release
+git switch --detach origin/main
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+推送后检查对应标签的 Release 工作流与资产。本文描述发布门槛，不代表尚未运行的标签构建已经通过。
 
 ## 发布资料与签名
 

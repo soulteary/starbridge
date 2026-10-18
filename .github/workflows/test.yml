@@ -46,17 +46,7 @@ jobs:
 
       - name: Run installed developer module synthetic contracts
         shell: powershell
-        run: |
-          $contracts = Get-ChildItem tests/windows/developer-*.ps1 -File |
-            Where-Object { $_.Name -match '^developer-(contract|tasks|files|bootstrap|.+-contract)\.ps1$' } |
-            Sort-Object Name
-          foreach ($contract in $contracts) {
-            Write-Host ('Running synthetic contract: ' + $contract.Name)
-            $command = "& '" + $contract.FullName.Replace("'", "''") + "'"
-            $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
-            & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded
-            if ($LASTEXITCODE -ne 0) { throw ('Synthetic contract failed: ' + $contract.Name) }
-          }
+        run: '& .\tests\windows\run-developer-contracts.ps1'
 
       - name: Parse opt-in desktop acceptance scripts
         shell: powershell
