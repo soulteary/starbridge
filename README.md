@@ -15,6 +15,18 @@ Starbridge 在 macOS 上运行 Go 单二进制，通过 Parallels CLI 调用 Win
 
 `guest` 提供基础只读查询；`dev` 提供开发动作，其中写操作需要单独授权。UIA 信息取决于应用支持；图片候选的识别由 MCP 客户端的视觉模型或 OCR 完成，Starbridge 不内置识别模型。点击或输入成功派发后，仍需检查应用的实际结果。
 
+## 通过 Homebrew 安装
+
+macOS 13 及以上支持 Apple Silicon 和 Intel，无需安装 Go：
+
+```sh
+brew update
+brew install soulteary/tap/starbridge
+starbridge --version
+```
+
+[安装与使用](docs/USAGE.md#homebrew)包含更新、卸载、配套 helper 路径，以及找不到配方时的处理方法。
+
 ## 从源码开始
 
 需要 macOS、支持 CLI 的 Parallels Desktop，以及满足 [go.mod](go.mod) 的 Go 工具链：
@@ -34,11 +46,11 @@ Windows 功能还需要 Parallels Tools 和同版本 helper。按[安装与使�
 ./bin/starbridge dev screenshot.capabilities VM-UUID
 ```
 
-`VM-UUID` 是占位值，请使用 `vm list` 得到的目标标识。窗口查询、截图和输入需要可访问的已登录交互桌面。项目的 [Releases](https://github.com/soulteary/starbridge/releases) 用于分发配套安装包；尚无发布资产时使用源码构建。
+`VM-UUID` 是占位值，请使用 `vm list` 得到的目标标识。窗口查询、截图和输入需要可访问的已登录交互桌面。也可从 [Releases](https://github.com/soulteary/starbridge/releases) 下载配套安装包。
 
 ## 按任务阅读
 
-- [安装与使用](docs/USAGE.md)：构建、安装完整 helper、VM 管理、回收策略和 MCP 接入。
+- [安装与使用](docs/USAGE.md)：Homebrew、源码构建、安装完整 helper、VM 管理、回收策略和 MCP 接入。
 - [开发动作入口](docs/DEVELOPER.md)：能力探测、请求格式，以及任务、文件、等待、工作流和证据接口索引。
 - [查找控件](docs/DEVELOPER_UI_QUERY.md) · [窗口操作与文本输入](docs/DEVELOPER_UI_ACTIONS.md) · [窗口截图](docs/DEVELOPER_SCREENSHOTS.md) · [视觉观察与点击](docs/DEVELOPER_VISUAL.md)。
 - [MCP 开发工具](docs/MCP_DEVELOPER.md) · [VM 与动作授权](docs/MCP_ACCESS.md) · [并发与取消](docs/MCP_CONCURRENCY.md)。

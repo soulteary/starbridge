@@ -75,7 +75,7 @@ starbridge dev bootstrap.rollback VM --request rollback.json --allow-write
 {"source_dir":"/absolute/starbridge/guest/windows","target_dir":"C:\\ProgramData\\Starbridge","overwrite":false}
 ```
 
-`source_dir` 选择完整配套的 `guest/windows`：必须包含 `desktop-bridge.ps1`、`developer-bridge.ps1`、`developer/system.ps1`，并包括 `developer/` 下所有模块和 worker。只传输 helper 的 `.ps1`、`.cs` 源文件；不会安装用户配置。最多 256 个文件、单文件 8 MiB、合计 64 MiB。`target_dir` 必须显式指定 Windows 驱动器绝对目录，父目录须已存在，目录中各级 reparse point 会被拒绝。
+`source_dir` 选择完整配套的 `guest/windows`：必须是物理绝对路径，路径各级不接受符号链接；必须包含 `desktop-bridge.ps1`、`developer-bridge.ps1`、`developer/system.ps1`，并包括 `developer/` 下所有模块和 worker。Homebrew 用户按[安装指南](USAGE.md#homebrew)定位配套目录，并用 `pwd -P` 解析后填写。只传输 helper 的 `.ps1`、`.cs` 源文件；不会安装用户配置。最多 256 个文件、单文件 8 MiB、合计 64 MiB。`target_dir` 必须显式指定 Windows 驱动器绝对目录，父目录须已存在，目录中各级 reparse point 会被拒绝。
 
 `overwrite:true` 仅允许更新本工具管理的完整安装：旧目录必须包含有效 manifest，文件内容和清单须一致，提交前会再次校验。未知目录返回 `BOOTSTRAP_UNMANAGED_TARGET`；手工安装或包含其他文件的目录请改用新目录安装。
 
