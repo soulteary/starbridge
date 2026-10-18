@@ -1,13 +1,12 @@
-# Search Windows controls
+# 查询 Windows 控件
 
-Install the complete [developer helper](DEVELOPER.md), then use fresh
-`guest processes` and `guest windows` observations to obtain the target HWND,
-PID and process `start_time_utc`. These three fields are required together;
-the worker checks the window owner and process start time before and after
-inspection. UI queries require the logged-in Windows interactive session.
+`ui.query` 在指定窗口内搜索 UI Automation（UIA）控件，返回位置、支持的能力接口（pattern）、状态和可选的当前值。它是只读开发动作，要求目标所在的 Windows 交互会话。先安装完整的 [developer helper](DEVELOPER.md)。MCP 名称为 `dev.ui.query`，服务端需开启 `--developer-tools`；它不需要写授权，配置动作策略时仍需对应 grant。
 
-Save this synthetic example as a request file, replacing the three identity
-fields with observations from your own test application:
+从 `guest processes` 和 `guest windows` 获取新鲜的 `hwnd`、`pid`、`start_time_utc`。三者必须一起提供；worker 在查询前后核对窗口归属和进程启动时间，防止句柄或 PID 被复用。`start_time_utc` 需精确到 100 ns 或更粗，主机将其规范化为 UTC。
+
+## 请求示例
+
+将以下合成参数保存为 `query.json`。预演不访问 VM；实际查询前需换成测试应用的身份和控件条件。
 
 ```json
 {
@@ -27,82 +26,48 @@ fields with observations from your own test application:
 ```
 
 ```sh
+./bin/starbridge --dry-run dev ui.query fixture-vm --request query.json
+# 替换为当前测试应用参数后执行：
 ./bin/starbridge dev ui.query VM --request query.json
 ```
 
-## Selectors and budgets
+## 选择条件与预算
 
-`selector` and `ancestor` are optional objects with any of `name`,
-`automation_id`, `control_type`, `class_name`, and `name_contains`. Exact fields
-are case-sensitive; `name_contains` is an ordinal case-insensitive substring.
-All supplied conditions must match. Names/class names are limited to 256 Unicode
-code points, automation IDs to 512, and control types to 64. No regular expression
-or script can be supplied. An omitted or empty selector matches every control.
-An ancestor condition must match at least one ancestor between the control and
-the requested window root; it does not match the control itself.
+`selector` 和 `ancestor` 均为可选对象，支持 `name`、`name_contains`、`automation_id`、`control_type`、`class_name`。同一对象中的条件必须全部匹配；精确字段区分大小写，`name_contains` 使用不区分大小写的序号子串比较，不接受正则或脚本。`name`、`name_contains`、`class_name` 最多 256 个 Unicode 码点，`automation_id` 为 512，`control_type` 为 64。
 
-The window is the root of a depth-first UIA Control View search. Defaults and
-ranges are `offset=0` (`0..4999`), `limit=50` (`1..200`), `max_depth=6` (`0..12`),
-`max_scan_nodes=2000` (`1..5000`), and `timeout_ms=10000` (`1000..20000`).
-The depth and scan budgets include the root at depth zero. A separate MTA worker
-is terminated on timeout; no UI actions are performed by this query.
+省略或留空 `selector` 表示匹配全部控件。`ancestor` 要求从父节点到窗口根（含根）的某个祖先匹配，不包含控件自身。搜索使用 UIA Control View，从窗口根按深度优先顺序遍历。
 
-`mode:list` returns a page and its observed match count. `mode:one` defaults to
-`limit:1`, requires `offset:0`, and reports `ELEMENT_NOT_FOUND`,
-`AMBIGUOUS_MATCH`, or `QUERY_INCOMPLETE` instead of choosing a control arbitrarily.
-Uniqueness applies to the configured window/depth scope, not the entire desktop.
+- `mode`：默认 `list`；`one` 要求在配置的搜索范围内恰好匹配一个控件。
+- `offset`：默认 `0`，范围 `0..4999`；`limit` 默认 `50`，范围 `1..200`。
+- `max_depth`：默认 `6`，范围 `0..12`，窗口根深度为 `0`。
+- `max_scan_nodes`：默认 `2000`，范围 `1..5000`，包含窗口根及不匹配的已扫描节点。
+- `timeout_ms`：默认 `10000`，范围 `1000..20000`，由独立 MTA worker 的进程期限约束。
+- `include_value`：默认 `false`，仅显式设为 `true` 才读取非密码值。
 
-## Result
+`mode:"one"` 默认 `limit:1`，必须使用 `offset:0`、`limit:1`。没有匹配、多个匹配或搜索不完整时分别返回 `ELEMENT_NOT_FOUND`、`AMBIGUOUS_MATCH`、`QUERY_INCOMPLETE`。唯一性只适用于指定窗口和深度范围。
 
-The ordinary `dev-1` response contains:
+## 输出与完整性
 
-- `window:{hwnd,pid,start_time_utc}`, `snapshot_id`, UTC `timestamp`,
-  `coordinate_space:"guest-screen-physical-pixels"`, and `pagination:"live"`.
-- The applied `mode`, `offset`, `limit`, `max_depth`, `max_scan_nodes` and
-  `include_value`, followed by `scanned_nodes`, `matched_count`, `returned_count`,
-  `items`, `has_more`, `complete`, `node_limit_reached`, `depth_limit_reached`
-  and up to 16 warning codes.
-- Each item has `node_id`, `parent_id`, `runtime_id`, `depth`, `pid`, `name`,
-  `control_type`, `automation_id`, `class_name`, `framework_id`,
-  `rect:{x,y,width,height}` (or `null`), `is_enabled`, `is_offscreen`,
-  `is_password`, `patterns`, `state`, `value`, `value_status`, and
-  `value_truncated`.
+响应使用 [dev-1 envelope](DEVELOPER.md)，`data` 包含：
 
-`patterns` lists supported UIA pattern names. `state` contains nullable `toggle`
-(`Off`, `On`, `Indeterminate`), `is_selected`, `expand_collapse` (`Collapsed`,
-`Expanded`, `PartiallyExpanded`, `LeafNode`), `value_read_only`, `range_value`,
-`range_minimum`, and `range_maximum`. These fields describe what the provider
-exposes; missing patterns produce null state fields.
+- `window:{hwnd,pid,start_time_utc}`、`snapshot_id`、UTC `timestamp`、`coordinate_space:"guest-screen-physical-pixels"` 和 `pagination:"live"`。
+- 应用后的 `mode`、`offset`、`limit`、`max_depth`、`max_scan_nodes`、`include_value`。
+- `scanned_nodes`、`matched_count`、`returned_count`、`items`、`has_more`、`complete`、`node_limit_reached`、`depth_limit_reached`，以及最多 16 个去重警告码。
 
-Values are opt-in. With `include_value:true`, ValuePattern or TextPattern content
-is returned up to 2048 code points. `value_status` is `not_requested`, `available`,
-`unsupported`, `unavailable`, or `password_skipped`. Password controls never
-return values or pattern-state contents, even with opt-in. ValuePattern providers
-return a whole string before client truncation; output and time budgets do not
-limit an external provider's allocation.
+每个 `items` 元素含 `node_id`、`parent_id`、`runtime_id`、`depth`、`pid`、`name`、`control_type`、`automation_id`、`class_name`、`framework_id`、`rect:{x,y,width,height}`（或 `null`）、`is_enabled`、`is_offscreen`、`is_password`、`patterns`、`state`、`value`、`value_status`、`value_truncated`。名称和 automation ID 最多 512 码点，class 为 256，framework 为 128。
 
-`complete` describes traversal within the configured depth. It is false when
-the scan budget or inaccessible children prevented that traversal; an incomplete
-`matched_count` is a lower bound. `has_more` refers only to matches already
-observed, so false does not prove exhaustion when `complete` is false.
-`depth_limit_reached` records reaching the requested depth, not proof of further
-descendants. Increase the scan budget or narrow the scope when necessary.
+`patterns` 列出提供程序支持的 pattern 名称，最多 32 项。`state` 的字段在不支持或不可读取时为 `null`：`toggle`（`Off`、`On`、`Indeterminate`）、`is_selected`、`expand_collapse`（`Collapsed`、`Expanded`、`PartiallyExpanded`、`LeafNode`）、`value_read_only`、`range_value`、`range_minimum`、`range_maximum`。
 
-Every page is a new live observation: there is no persistent pagination cursor.
-UI changes may alter later offsets. IDs are observation-local, parent IDs may
-refer to filtered-out controls, and pages are not a complete serialized tree.
-Re-query before an action. A rectangle, enabled state, or non-offscreen flag does
-not prove visibility or clickability; guest pixels are not macOS coordinates.
+`include_value:true` 时优先读取 ValuePattern，再尝试 TextPattern，最多返回 2048 码点，截断不拆开有效代理对。`value_status` 为 `not_requested`、`available`、`unsupported`、`unavailable` 或 `password_skipped`。被提供程序标记为密码的控件不读取值或 pattern 状态；密码状态不可读取时也按密码处理。此保护依赖应用的 UIA 信息，不能保证隐藏应用通过其他标签暴露的内容。ValuePattern 会先返回完整字符串，再由 helper 截断；输出预算不限制外部提供程序自身的分配。
 
-## Verification
+`complete` 表示配置深度内是否遍历完整。扫描预算耗尽、节点或子节点不可访问时为 `false`，此时 `matched_count` 只是下界。`has_more` 只描述已经观察到的匹配；当 `complete:false` 时，`has_more:false` 不代表没有更多控件。`depth_limit_reached` 记录到达配置深度，不证明该节点还有子节点。
 
-`tests/windows/developer-ui-query-contract.ps1` validates parameters, selector and
-ancestor matching, pagination, scan limits, opt-in/password behavior, native
-compilation and worker timeout using synthetic objects and an isolated sleeping
-worker. It does not inspect the user's desktop or start an application or VM.
-Go tests validate request normalization, private copies, bounds, result identity,
-password redaction and malformed guest responses.
+每一页都是新的实时查询，没有持久分页游标。界面变化会改变后续 offset；`node_id` 仅在本次快照内有效，`parent_id` 可能指向被筛掉的节点，`runtime_id` 也不是永久身份。动作前应重新匹配，[ui.act](DEVELOPER_UI_ACTIONS.md) 会执行这一检查。
 
-Actual UIA providers, Windows on Arm, mixed DPI and the Parallels current-user
-transport still require [desktop acceptance](DESKTOP_TESTING.md). These synthetic
-contracts do not establish that every application's provider supports the query.
+## 能力边界与验证
+
+查询结果取决于应用的 UIA 提供程序。自绘界面、游戏或远程画布可能只暴露外层窗口；成功返回一个空页不等于应用没有可操作内容。有效矩形、`is_enabled:true` 或 `is_offscreen:false` 均不证明控件未被遮挡或可以点击。UIA 矩形为 Windows guest 的物理屏幕像素，不是 macOS 或 Parallels 查看器坐标。
+
+需要视觉兜底时使用 [ui.observe / ui.click](DEVELOPER_VISUAL.md)。桥接层本身不提供 OCR 或视觉模型。
+
+`tests/windows/developer-ui-query-contract.ps1` 使用合成控件与隔离的等待 worker，覆盖选择条件、祖先匹配、分页、预算、密码保护、文本截断、原生编译及超时，不检查真实桌面。Go 测试覆盖参数、响应、身份及预算。实际 UIA 提供程序、Windows on Arm、混合 DPI 和 Parallels 当前用户传输仍需[桌面验收](DESKTOP_TESTING.md)。

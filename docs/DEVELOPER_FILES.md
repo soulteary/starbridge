@@ -1,6 +1,6 @@
 # 文件传输、增量同步与 helper 安装
 
-所有写入都需要 `--allow-write`，包括写入 macOS 文件的 `files.download`。预演使用全局 `--dry-run`：验证参数并隐藏目录和文件内容，不打开源文件、不连接虚拟机。命令格式：
+`files.upload`、`files.download`、`files.sync` 和安装/回退均需要 `--allow-write`，包括只写宿主的下载。CLI 请求文件直接保存参数对象，不加 action/params 外层。全局 `--dry-run` 只执行即时参数校验并隐藏相应路径/内容，不打开源文件、同步 profile 或安装源目录，不创建目标，也不连接 VM；预演成功不证明文件、配置或目标权限可用。
 
 ```sh
 starbridge dev files.upload VM --request upload.json --allow-write
@@ -16,7 +16,7 @@ starbridge dev files.sync VM --request sync-request.json --allow-write
 {"version":1,"roots":{"workspace":"C:\\Projects\\Demo","artifacts":"C:\\Projects\\Demo\\out"}}
 ```
 
-根目录须预先存在。请求使用根目录别名和相对路径，支持 `/` 或 `\`，返回路径统一使用 `/`。拒绝 `..`、绝对路径、NTFS alternate stream、Windows 保留文件名和各级 reparse point。传输暂存目录 `.starbridge-transfers` 不允许作为普通文件路径。
+根目录须预先存在，且 Windows 当前用户有对应读写权限。bootstrap 安装使用独立固定 loader，不依赖这里的 roots 配置。普通文件请求使用根目录别名和相对路径，支持 `/` 或 `\`，返回路径统一使用 `/`。拒绝 `..`、绝对路径、NTFS alternate stream、Windows 保留文件名和各级 reparse point。传输暂存目录 `.starbridge-transfers` 不允许作为普通文件路径。
 
 这是当前 Windows 账户下的开发工具；目录配置与 helper 代码必须来自可信来源，不能把同一账户的并发文件系统修改视作隔离边界。
 
@@ -34,13 +34,13 @@ starbridge dev files.sync VM --request sync-request.json --allow-write
 {"root":"artifacts","path":"test-results.json","local_path":"/absolute/project/results/test-results.json","overwrite":false}
 ```
 
-macOS 路径必须显式给出、为规范绝对路径，父目录须已存在，路径中的符号链接会被拒绝。单文件上限为 1 GiB。已有目标默认返回 `FILE_EXISTS`；需要替换时显式设置 `overwrite:true`。
+宿主 local_path 必须显式给出、为干净绝对路径，父目录须已存在，路径中的符号链接会被拒绝。请求路径不自动相对项目或配置文件解析。单文件上限为 1 GiB。已有目标默认返回 `FILE_EXISTS`；需要替换时显式设置 `overwrite:true`。
 
 下载发布前再次检查本地目标的身份、大小和修改时间；传输期间目标被修改、替换、创建或删除时返回 `FILE_CHANGED`，保留目标现状和下载临时文件。源文件与配置必须是普通文件，不接受命名管道。同步在任何传输前拒绝会指向同一 Windows 路径的大小写冲突。
 
 上传按 6144 字节分块，检查连续 offset、最终长度和 SHA-256，再在目标文件系统内完成替换。不会先删除旧目标。下载每块上限 65536 字节，核对文件版本及最终 SHA-256，在目标目录内写入 `.starbridge-part-*` 临时文件；校验完成后发布。失败时保留临时文件和已有目标，用户可检查或移除临时文件。
 
-连接超时或中断不能证明 Windows 操作没有发生。写操作不自动重试；检查文件哈希和传输状态后再操作。低层传输返回的 `transfer_id` 可用于主动取消已知暂存上传，程序不会自动取消结果未知的提交。
+连接超时或中断不能证明 Windows 操作没有发生。写操作不自动重试；检查文件哈希和传输状态后再操作。低层传输返回的 `transfer_id` 可用于主动取消已知暂存上传，程序不会自动取消结果未知的提交；保留原 transfer_id，勿从头重复上传覆盖来猜测结果。
 
 ## 增量同步
 
@@ -56,13 +56,13 @@ macOS 路径必须显式给出、为规范绝对路径，父目录须已存在�
 {"source":"./build","root":"workspace","path":"bin","exclude":["**/.git/**","**/*.pdb"],"overwrite":false}
 ```
 
-`source` 相对于配置文件所在目录，不能为绝对路径或包含 `..`；不跟随符号链接。`exclude` 使用 `/` 分段 glob，`*`、`?`、`[]` 匹配单段，`**` 匹配任意层目录。匹配目录时跳过整棵子树。
+同步 profile 必须是最多 64 KiB 的普通 JSON 文件，拒绝未知结构字段；MCP 另执行严格 Unicode 与重复键校验。`source` 相对于该配置文件所在目录，不能为绝对路径、使用反斜杠或包含 `..`；不跟随符号链接。path 可以为空字符串，表示根别名本身。`exclude` 使用 `/` 分段 glob，`*`、`?`、`[]` 匹配单段，`**` 匹配任意层目录。匹配目录时跳过整棵子树。最多 64 个 glob，每个最多 256 字节。
 
 同步比较 SHA-256，跳过内容相同的文件，仅上传缺失或内容不同的文件。内容不同且已有目标时，仍需 `overwrite:true`。一次最多 2000 个文件、10000 个目录项，总计 4 GiB。不会删除 Windows 端多余文件。返回 `file_count`、`uploaded`、`skipped` 和 `deleted:0`。同步按文件完成，不是目录事务；发生错误后，先前成功的文件仍已更新。
 
 ## 安装、更新与回退
 
-安装通过二进制内嵌的固定 loader 执行，不要求 Windows 已有开发 helper。Parallels Tools 和相应 Windows 账户会话仍须可用。
+安装通过二进制内嵌的固定 loader 执行，不要求 Windows 已有开发 helper。Parallels Tools 和相应 Windows 账户会话仍须可用；loader 不提升 Windows 权限，当前用户必须能写入目标。
 
 ```sh
 starbridge dev bootstrap.install VM --request install.json --allow-write
@@ -106,4 +106,10 @@ starbridge dev bootstrap.rollback VM --request rollback.json --allow-write
 - `file.commit {root,transfer_id}` 校验并发布，返回文件哈希和长度。
 - `file.abort {root,transfer_id}` 移除该传输的暂存文件，不修改目标。
 
-所有返回包含 `root`；文件身份返回还包含 `path`，传输身份返回包含 `transfer_id`。源码检出中的 Windows 合成测试在 [`tests/windows/developer-files.ps1`](../tests/windows/developer-files.ps1)、[`tests/windows/developer-bootstrap.ps1`](../tests/windows/developer-bootstrap.ps1)；bootstrap 合成测试需要源码检出中的内嵌 loader 源文件；发行包用户直接使用二进制中的安装动作。主机 fake 测试不代表真实虚拟机或桌面验收。
+先调用 file.hash 取得 file.read 所需的 expected_size/expected_version。所有低层返回包含 root；文件身份返回还包含 path，传输身份返回包含 transfer_id。高层上传/下载已封装分块、哈希与发布流程，通常无需手工编排这些 RPC。
+
+## MCP 与验证
+
+MCP 的高层传输和安装需要 `--developer-tools --allow-guest-write`；读取宿主来源/目标的动作还需 `--developer-workspace`。local_path、同步 profile/source、安装 source_dir 必须在作用域内；guest root/path、target_dir 按 Windows 规则处理，不当作宿主路径。bootstrap.rollback 不读取宿主文件，不依赖 workspace。高层 files.* 的 grant 包含其内部传输；直接 file.* 调用各需自己的 grant，详见[MCP 开发工具](MCP_DEVELOPER.md)。
+
+源码检出中的 Windows 合成测试在 [`tests/windows/developer-files.ps1`](../tests/windows/developer-files.ps1)、[`tests/windows/developer-bootstrap.ps1`](../tests/windows/developer-bootstrap.ps1)；bootstrap 合成测试需要源码检出中的内嵌 loader 源文件；发行包用户直接使用二进制中的安装动作。主机 fake 测试不代表真实虚拟机或桌面验收。

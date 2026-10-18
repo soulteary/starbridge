@@ -1,68 +1,102 @@
 # UIA 与视觉操作流程
 
-`ui.observe` 同时提供窗口图像与可选 UIA 查询。优先使用 UIA 的真实 selector 和 `ui.act`；应用没有可用控件树时，MCP 客户端中的视觉模型或 OCR 可以在图片上提出一个候选位置，再交给 `ui.click`。桥接层不调用模型、不保存模型凭据，也不把图片坐标伪装成控件 ID。
+优先使用[控件查询](DEVELOPER_UI_QUERY.md)提供的真实 selector 和 [ui.act](DEVELOPER_UI_ACTIONS.md)。应用没有可用控件树时，`ui.observe` 提供图像与可选 UIA，客户端的视觉模型、OCR 或使用者提出一个候选位置，`ui.click` 校验观察后点击并返回新图像。桥接层不调用模型或 OCR，不保存模型凭据，也不把图片坐标当作控件 ID。
 
-安装完整的 `developer/` 目录，包括 `visual-flow.ps1` 和 workers。两动作都要求目标所在的 Windows 交互会话，窗口身份必须包含 `hwnd`、`pid`、`start_time_utc`。
+安装完整的 `developer/` 目录。两动作均需目标所在的 Windows 交互会话；观察需 `hwnd`、`pid`、`start_time_utc`，点击通过前次观察携带同一身份。
 
-## 观察与点击
+## 请求一次观察
 
-先准备 `window.json`，填入实际窗口身份：
+保存以下合成参数为 `window.json`。预演不访问 VM；实际执行需替换当前测试窗口身份：
 
 ```json
-{"hwnd":"0x123","pid":42,"start_time_utc":"2026-01-02T03:04:05Z"}
+{"hwnd":"0x123","pid":42,"start_time_utc":"2026-01-02T03:04:05Z","include_uia":true,"capture_method":"print_window"}
 ```
 
 ```sh
-starbridge dev ui.observe VM --request window.json
+./bin/starbridge --dry-run dev ui.observe fixture-vm --request window.json
+# 替换身份后保存实际响应，供客户端读取：
+./bin/starbridge dev ui.observe VM --request window.json > before.json
 ```
 
-`data.screenshot` 沿用 [截图契约](DEVELOPER_SCREENSHOTS.md)，包含有界 PNG、实际捕获边界、时间、尺寸和哈希。`data.uia.status` 为 `available`、`unavailable` 或 `not_requested`；可用时携带 `data` 和真实 `complete`，失败时仅给稳定 `error_code`。UIA 不支持、超时或扫描不完整不会被解释成“没有控件”。图像与 UIA 是相邻的独立观察，各自保留时间，不承诺原子快照。
+`data.screenshot` 使用[截图契约](DEVELOPER_SCREENSHOTS.md)，含有界 PNG、实际捕获 `rect`、时间、尺寸和哈希。`data.source` 为 `visual` 或 `uia-and-visual`；`data.uia.status` 为：
 
-`data.observation` 是可原样传回的元数据，包含 Windows 当前用户作用域的 DPAPI token。token 不写入 guest 文件，硬有效期 30 秒，并绑定窗口身份、会话、DPI、图片哈希、尺寸、实际捕获 `rect` 和独立的 Win32 `window_rect`。它防止误改元数据，不是针对能控制同一 Windows 用户的代码的安全边界。
+- `available`：携带查询 `data` 和它的 `complete`。
+- `unavailable`：仅给稳定 `error_code`，图像仍保留。
+- `not_requested`：请求设置了 `include_uia:false`。
 
-调用 `ui.click` 时，`observation` 使用该对象，`target` 提供一个点或一个矩形；矩形取中心，不接受候选数组：
+UIA 超时、不支持或搜索不完整不能解释成“没有控件”。图像与 UIA 是相邻的独立观察，各有时间，不承诺原子快照。
 
-```json
-{"target":{"x":120,"y":40,"width":60,"height":24,"image_width":800,"image_height":600},"focus":true,"max_age_ms":15000}
-```
+`data.observation` 应原样传回：它含 Windows 当前用户作用域的 DPAPI token，绑定窗口身份、会话、DPI、图片哈希/尺寸、实际捕获 `rect` 和独立的 Win32 `window_rect`。token 不写入 guest 文件，硬有效期为 30 秒；它防止元数据误改，不防范控制同一 Windows 用户的代码。过期后重新观察，不要修改时间戳。
 
-上例只展示候选字段，实际请求还必须包含本次生成的 `observation`。坐标从图片左上角开始，单位为候选图片像素；未指定 `image_width/image_height` 时使用原图尺寸。允许完整图片缩放，按像素中心映射到实际捕获边界；不能把裁剪、加边框或拼接图片的坐标当作原图坐标。负坐标显示器受支持，不额外乘 DPI 缩放系数。
+## 从客户端候选生成点击请求
 
-可运行的 [Python 客户端示例](../examples/visual-flow.py) 负责生成请求、保存 PNG 和传回 token，不包含 OCR 或模型接口：
+`target` 只接受一个点，或同时含 `width`、`height` 的矩形；矩形点击中心，不接受候选数组。坐标原点为候选图像左上角，单位为图像像素。省略 `image_width` / `image_height` 时使用原图尺寸；若客户端缩放了整张图，应给出缩放后的尺寸。不能直接传入裁剪、加边框或拼接图片上的坐标，也不额外乘 DPI 系数。
+
+以下脚本把实际 `before.json` 中的观察对象与一个合成候选组合成完整 `click.json`。坐标应先由客户端按本次图片确认；不要手写或复用其他窗口的 token：
 
 ```sh
-python3 examples/visual-flow.py observe VM --hwnd 0x123 --pid 42 \
-  --start-time-utc 2026-01-02T03:04:05Z --output /tmp/visual-before
-# 在有效期内，根据 before/screenshot.png 给出候选；需要激活窗口才加 --focus。
-python3 examples/visual-flow.py click VM --observation /tmp/visual-before/result.json \
-  --x 120 --y 40 --focus --output /tmp/visual-after
+python3 - <<'PYCLIENT'
+import json
+from pathlib import Path
+before = json.loads(Path("before.json").read_text(encoding="utf-8"))
+if before.get("ok") is not True:
+    raise SystemExit("需要成功的 ui.observe 或 ui.click 响应")
+request = {
+    "observation": before["data"]["observation"],
+    "target": {"x": 120, "y": 40},
+    "focus": False,
+    "max_age_ms": 15000,
+    "include_uia": True
+}
+Path("click.json").write_text(json.dumps(request, ensure_ascii=False), encoding="utf-8")
+PYCLIENT
+./bin/starbridge --dry-run dev ui.click VM --request click.json --allow-write
 ```
 
-示例中的窗口身份和候选需要替换成当前目标。`--output` 必须是新目录；示例在输入前独占创建 0700 目录与 0600 结果文件，拒绝覆盖旧观察。CLI 点击显式传入 `--allow-write`；执行后保存新截图与结果。token 过期后重新观察和定位，不能修改时间戳延长有效期。
+确认候选、窗口身份和焦点后，实际点击使用 `./bin/starbridge dev ui.click VM --request click.json --allow-write`。若模型定位已超过有效期，先重新观察。需要请求普通前台激活时显式设置 `focus:true`；默认不切换焦点。
 
-## 校验与结果
+项目也提供[完整 Python 客户端](../examples/visual-flow.py)，负责生成请求、保存 PNG 并传回 token，不包含模型/OCR。以下身份与位置均为合成示例，实际执行前需替换：
 
-`ui.click` 在一个 Windows session mutex 内核对 token、年龄、HWND/PID/进程启动时间、会话、Win32 几何和 DPI。只有显式 `focus:true` 才请求普通前台激活；激活后再次校验。最终调用现有 `input.mouse` 核心，继续检查前台窗口、客户区、遮挡窗口以及物理输入状态。拒绝过期、越界、已移动、已缩放或身份改变的观察；不会自动重试点击。
+```sh
+python3 examples/visual-flow.py --bridge ./bin/starbridge observe VM --hwnd 0x123 --pid 42 \
+  --start-time-utc 2026-01-02T03:04:05Z --output work/visual-before
+# 查看 work/visual-before/screenshot.png，在有效期内选择一个候选：
+python3 examples/visual-flow.py --bridge ./bin/starbridge click VM \
+  --observation work/visual-before/result.json --x 120 --y 40 \
+  --focus --output work/visual-after
+```
 
-默认只检查几何和新鲜度，不能保证截图内容未变。`strict_image_match:true` 另外按原捕获方法复拍并比对完整 PNG 哈希；动画、光标闪烁、hover 或聚焦造成的变化都可能拒绝。默认允许图像内容变化是可用性取舍，客户端仍需判断候选是否足够明确。
+`--output` 必须是新目录。客户端在可能输入前独占创建 0700 目录和 0600 结果文件，拒绝覆盖旧观察；点击显式传入 `--allow-write`。如客户端超时或输出失败，先检查应用，不要假定未点击。
 
-点击成功响应只表示 `outcome:"dispatched"`，`verification.status` 始终为 `pending`。默认等待 250ms 后返回新的 `observation`、PNG 和可选 UIA；`wait_ms` 可设 0–2000，仅是采样延迟。业务结果应通过新图片、`ui.query` 或 [等待/断言](DEVELOPER_WAIT.md) 明确验证，不能把派发当作“保存成功”等业务结论。
+## 校验、预算与结果
 
-`include_uia` 默认 true，固定限制 64 项、500 个扫描节点、深度 6，不读取控件值。`uia_timeout_ms` 默认 1500，范围 1000–5000；`timeout_ms` 默认 15000，范围 2000–20000，UIA 使用视觉 worker 结束后的剩余等待预算。不足 1000ms 时直接降级为 UIA_TIMEOUT。进程启动和传输也受外层 CLI 超时约束。
+`ui.click` 在同一 Windows 会话互斥锁内核对 token、年龄、HWND/PID/进程启动时间、会话、Win32 几何与 DPI。可选聚焦后再次校验，然后复用 `input.mouse` 核心检查前台、客户区、遮挡和物理输入状态。一个外层锁覆盖聚焦、点击和点击后的截图，不会嵌套申请同一锁。
 
-`max_age_ms` 默认 15000，范围 100–30000；使用 Windows guest 时钟计算，避免宿主时钟偏差。`max_bytes/max_pixels` 沿用截图预算。`capture_method` 委托安装版本的截图能力校验；点击省略时继承观察的捕获方法。基础版本使用默认 `print_window`，不能据此假定应用一定会提供有效画面。
+默认只验证几何与新鲜度，不保证图像内容未变。`strict_image_match:true` 额外按原捕获方法复拍，比较完整 PNG 哈希；动画、光标、hover 或聚焦导致的变化均可能拒绝。客户端仍需判断候选是否足够明确。
 
-启动前拒绝返回 `error.details.outcome:"not_started"`；聚焦或输入可能开始后失败、worker/传输超时，以及点击后的截图失败均返回 `unknown`。聚焦本身也可能改变窗口状态。先观察实际结果，再决定下一步；桥接层不会撤销输入。
+- `include_uia`：默认 `true`；固定查询上限 64 项、500 个扫描节点、深度 6，不读取控件值。
+- `timeout_ms`：默认 `15000`，范围 `2000..20000`。`uia_timeout_ms` 默认 `1500`，范围 `1000..5000`，必须小于总 timeout。可选 UIA 使用视觉 worker 结束后的剩余等待预算，不足 1000ms 时降级为 `UIA_TIMEOUT`。
+- `max_age_ms`：点击默认 `15000`，范围 `100..30000`，按 Windows guest 时钟计算。
+- `wait_ms`：点击后的采样延迟，默认 `250`，范围 `0..2000`。
+- `lock_timeout_ms`：默认 `0`，范围 `0..5000`；与 `wait_ms` 之和必须小于 `timeout_ms`。
+- `button`：`left`（默认）、`right` 或 `middle`。坐标经映射后仍需在物理输入的 `-65535..65535` 范围内。
+- `max_bytes`、`max_pixels` 沿用截图预算。`capture_method` 可选 `print_window` / `windows_graphics_capture`；点击省略时继承前次观察的后端。可先调用 `screenshot.capabilities`。
 
-## MCP
+进程启动、清理与传输还受外层 CLI 超时影响；超时约束等待，不证明输入已撤销。
 
-开启 `serve --developer-tools` 后可调用 `dev.ui.observe`；点击另需 `--allow-guest-write`，不需要宿主 workspace。成功时图片作为原生 MCP `image/png` 返回，文本和 structured content 仅保留元数据，均不重复 Base64。
+点击成功只表示 `outcome:"dispatched"`，`coordination:"windows-session-mutex"`，`verification.status` 始终为 `pending`；另返回实际输入点和新的观察、PNG、可选 UIA。`wait_ms` 不是业务完成条件，应通过新图片、`ui.query` 或[等待/断言](DEVELOPER_WAIT.md)验证结果。
 
-策略按 VM UUID 逐一检查嵌套动作：
+Windows worker 能确认尚未开始时返回 `error.details.outcome:"not_started"`；本地参数或授权错误可能更早返回。聚焦或输入开始后失败、worker/传输超时、后截图失败，以及点击提交后无法验证响应时，都不能当作未发生，`unknown` 表示需要重新观察。桥接层不会撤销或自动重试输入。
+
+## MCP 授权与边界
+
+开启 `serve --developer-tools` 可调用 `dev.ui.observe`；点击另需 `--allow-guest-write`，不需要宿主 workspace。成功返回原生 MCP `image/png`，文字与 structured content 只保留元数据。
+
+配置动作策略时，按同一 VM UUID 检查全部依赖：
 
 - `ui.observe`：`dev.ui.observe`、`dev.screenshot.capture`；默认还需 `dev.ui.query`。
 - `ui.click`：`dev.ui.click`、`dev.screenshot.capture`、`dev.input.mouse`；默认还需 `dev.ui.query`，`focus:true` 另需 `dev.window.focus`。
 
-设置 `include_uia:false` 时不要求 UIA grant。拒绝授权时不会调用 guest 或枚举 VM。工具保留既有 VM 写协调和 guest session mutex；读取仍可能与其他客户端的写入交错，token 校验不会锁定应用内容。
+`include_uia:false` 不要求 UIA grant。拒绝授权时不调用 guest；策略针对 UUID 已能判断拒绝时也不枚举 VM。读取仍可能与其他客户端写入交错，会话锁不排斥人工输入，也不锁定应用内容。
 
-Go 测试使用生成的 PNG 和 fake transport/MCP SDK。`tests/windows/developer-visual-contract.ps1` 使用合成 native/input 替身和真实 DPAPI，验证映射、过期、篡改、会话/DPI/几何变化、单次派发、新观察与 UIA 降级；不操作真实桌面。真实应用渲染、前台激活与鼠标命中仍需单独桌面验收。
+Go 测试使用生成 PNG、fake transport 和真实 MCP SDK；`tests/windows/developer-visual-contract.ps1` 使用合成 native/input 替身与真实 DPAPI，检查映射、篡改、过期、会话/DPI/几何变化、单次派发、后截图失败和 UIA 降级，不操作真实桌面。任意应用渲染、焦点和命中仍需[开发验收](DEVELOPER_ACCEPTANCE.md)。
