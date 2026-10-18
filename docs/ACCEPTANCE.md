@@ -19,7 +19,7 @@
 - `developer-screenshot-contract.ps1`、`developer-wgc-contract.ps1`：实际编译截图 C#，验证生成的 PNG、字节/像素预算、错误码、边距裁剪和缓冲区；WGC 探测 OS/API/设备，并以 WARP 对匿名像素运行真实 D3D11 资源创建、复制和读回，不捕获窗口。
 - `developer-visual-contract.ps1`：生成图片、合成观察、DPAPI 观察令牌、坐标映射、过期与身份校验、点击前后结果及 UIA 降级；窗口、截图和输入分派使用替身。
 
-这些检查会创建自己的临时文件、进程和同步对象。它们不连接 Parallels，不操作现有用户应用；合成成功、API 探测成功和脚本语法通过都不能替代真实窗口的输入或截图验收。具体脚本以[工作流的匹配规则](https://github.com/soulteary/starbridge/blob/main/.github/workflows/test.yml)为准。
+这些检查会创建自己的临时文件、进程和同步对象，任务测试在可用交互会话中也会创建和关闭自有 GUI。它们不连接 Parallels，不操作现有用户应用；合成成功、API 探测成功和脚本语法通过都不能替代真实窗口的输入或截图验收。普通 Tests 与 Release 使用同一[合成检查入口](../tests/windows/run-developer-contracts.ps1)，按原有精确名称规则选择上述脚本；不会执行 opt-in 桌面/VM 验收。
 
 在源码目录复现宿主检查：
 
@@ -37,19 +37,13 @@ go build -o bin/starbridge ./cmd/starbridge
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\windows\guest-smoke.ps1
 ```
 
-随后在 Windows PowerShell 中执行与普通 CI 相同的 developer 选择规则，每个脚本使用独立进程，避免已加载的 C# 类型或测试替身互相影响：
+随后运行普通 CI 与 Release 共用的 developer 检查入口，每个脚本使用独立 Windows PowerShell 进程，避免已加载的 C# 类型或测试替身互相影响：
 
 ```powershell
-$contracts = Get-ChildItem tests/windows/developer-*.ps1 -File |
-  Where-Object { $_.Name -match '^developer-(contract|tasks|files|bootstrap|.+-contract)\.ps1$' } |
-  Sort-Object Name
-foreach ($contract in $contracts) {
-  $command = "& '" + $contract.FullName.Replace("'", "''") + "'"
-  $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
-  & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded
-  if ($LASTEXITCODE -ne 0) { throw ('Synthetic contract failed: ' + $contract.Name) }
-}
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\windows\run-developer-contracts.ps1
 ```
+
+入口按自身路径定位源码根目录，不依赖调用时的工作目录；从其他目录使用脚本的绝对路径即可。没有匹配脚本或任一子进程失败时，检查失败。工作流另行解析 `tests/windows/*.ps1`，只检查 opt-in 脚本语法，不将它们作为合成契约执行。
 
 ## 桌面端到端验收
 
