@@ -66,7 +66,9 @@ Register-DeveloperAction -Name 'example.inspect' -Handler {
 } -Mutation:$false -Interactive:$false -Description 'Inspect an example.'
 ```
 
-`Get-DevString $p name default max [-Required]` 按 Unicode 码点计长；缺失使用默认值，显式 null、错误类型、NUL 或超长会拒绝。整数要求精确且有界，布尔值不接受字符串或数字。`Assert-DevFields` 拒绝未知字段，`Get-DevField` 保留数组。handler 只返回一个数据对象；用 `Stop-Dev CODE MESSAGE [DETAILS]` 返回稳定错误，不把包含私密路径或输入的异常消息直接回传。
+`Get-DevString $p name default max [-Required]` 对已提供的值检查字符串类型与 Unicode 码点长度，拒绝显式 null、错误类型和超长值。`-Required` 还要求字段存在且字符串长度非零；可选字段缺失时原样返回默认值，不校验默认值。
+
+通用字符串函数不检查 NUL、路径合法性或枚举范围；handler 和宿主的 `Normalize` 需要按参数用途自行约束这些内容。`Get-DevInteger` 要求精确、有界整数，`Get-DevBoolean` 要求提供的值为布尔类型。`Assert-DevFields` 检查对象与允许字段名，不代替各字段的类型、必填或业务校验；`Get-DevField` 只读取字段或默认值，并保留数组。handler 只返回一个数据对象；用 `Stop-Dev CODE MESSAGE [DETAILS]` 返回稳定错误，不把包含私密路径或输入的异常消息直接回传。
 
 源码中的合成测试可在 Windows PowerShell 5.1 运行：
 
