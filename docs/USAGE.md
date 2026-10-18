@@ -2,9 +2,72 @@
 
 [返回项目首页](../README.md) · [架构与能力边界](ARCHITECTURE.md) · [开发动作](DEVELOPER.md) · [验证与验收](ACCEPTANCE.md)
 
-## 1. 构建宿主程序
+## 1. 安装宿主程序
 
-宿主需要 macOS 和支持 CLI 的 Parallels Desktop。源码构建的最低 Go 版本见 [go.mod](../go.mod)；正式打包使用 `.go-version` 固定的工具链，见[发布指南](RELEASING.md)。
+宿主需要 macOS 和支持 CLI 的 Parallels Desktop。可选择 Homebrew、发布包或源码构建；二进制与 Windows helper 应来自同一个源码提交或发布包。
+
+### Homebrew
+
+[soulteary/tap](https://github.com/soulteary/homebrew-tap) 提供 macOS 13 及以上的 Apple Silicon / Intel 安装包，由 Homebrew 选择架构并校验下载，无需 Go：
+
+```sh
+brew update
+brew install soulteary/tap/starbridge
+starbridge --version
+```
+
+完整名称安装会按需添加 tap，不必另行执行 `brew tap`。Homebrew 安装宿主程序和配套文件；Windows 功能还需 Parallels Tools，并按[下一步](#2-安装-windows-helper)安装 helper。
+
+完整发布目录位于 `$(brew --prefix starbridge)/libexec`，包含 `guest/windows`、文档、示例、测试和许可。查看安装位置及使用指南：
+
+```sh
+brew --prefix starbridge
+open "$(brew --prefix starbridge)/libexec/docs/USAGE.md"
+```
+
+`bootstrap.install` 的 `source_dir` 要求物理绝对路径，路径中各级符号链接都会被拒绝。Homebrew 的 `opt` 路径通常是链接，先解析再将输出填入安装请求：
+
+```sh
+starbridge_helper_source=$(cd "$(brew --prefix starbridge)/libexec/guest/windows" && pwd -P)
+printf '%s\n' "$starbridge_helper_source"
+```
+
+安装、更新与回退请求见[helper 安装说明](DEVELOPER_FILES.md#安装更新与回退)。此命令只定位本机文件，不向 VM 复制 helper。
+
+更新已安装的 Starbridge：
+
+```sh
+brew update
+brew upgrade soulteary/tap/starbridge
+starbridge --version
+```
+
+`brew update` 刷新 Homebrew 和配方，升级 Starbridge 需执行 `brew upgrade`。宿主升级不会更新 Windows 中已有的 helper；应重新取得升级后的配套目录，按同版本整树更新，避免沿用旧版文件或旧 Cellar 路径。完成更新后，重启客户端的 Starbridge MCP 服务，使新宿主版本生效。
+
+卸载宿主程序：
+
+```sh
+brew uninstall starbridge
+```
+
+该操作不删除 VM，也不卸载 Windows 中的 helper。
+
+如果出现 `No available formula or cask with the name "soulteary/tap/starbridge"`，先刷新本机 tap，再重试：
+
+```sh
+brew update
+brew install soulteary/tap/starbridge
+```
+
+已添加 tap 时，重跑 `brew tap soulteary/tap` 不会刷新现有检出。若仍找不到，检查 `brew update` 是否成功，以及 [tap 主分支的配方](https://github.com/soulteary/homebrew-tap/blob/main/Formula/starbridge.rb)是否已存在；尚未合并的 PR 不会出现在正常安装中。
+
+### 发布包
+
+从 [Releases](https://github.com/soulteary/starbridge/releases) 选择 macOS 宿主架构对应的归档，下载同版本 `checksums.txt` 并校验后解压。包内使用 `./starbridge`，安装与校验详情见[发布包说明](RELEASING.md)。
+
+### 从源码构建
+
+最低 Go 版本见 [go.mod](../go.mod)；正式打包使用 `.go-version` 固定的工具链，见[发布指南](RELEASING.md)。
 
 在项目根目录执行：
 
@@ -15,7 +78,7 @@ go build -o bin/starbridge ./cmd/starbridge
 ./bin/starbridge vm list
 ```
 
-本文使用源码目录下的 `./bin/starbridge`；也可替换为 `go run ./cmd/starbridge`。[Releases](https://github.com/soulteary/starbridge/releases) 有配套资产时，解压后用 `./starbridge` 代替。二进制与 Windows helper 应来自同一个源码提交或发布包。
+后文使用源码目录下的 `./bin/starbridge`；Homebrew 用户替换为 `starbridge`，发布包用户替换为解压目录中的 `./starbridge`。源码用户也可使用 `go run ./cmd/starbridge`。
 
 `doctor` 检查宿主 CLI，不会启动 VM。CLI 路径依次取 `--prlctl`、`STARBRIDGE_PRLCTL`、兼容变量 `PRLBRIDGE_PRLCTL`、Parallels App 内的 CLI、`PATH`。覆盖路径时使用：
 
@@ -29,7 +92,7 @@ go build -o bin/starbridge ./cmd/starbridge
 
 Windows VM 需要安装 Parallels Tools，并提供 Windows PowerShell 5.1。窗口、UIA、截图和输入还需要可访问的已登录交互桌面；`--current-user` 本身不能保证满足这些条件。
 
-在 Windows 中打开已复制的项目或配套包根目录，把完整 helper 树复制到默认位置：
+将源码目录或完整配套包复制到 Windows；Homebrew 用户使用上文定位的 `libexec` 目录，并保留其内部结构。在包含 `guest/windows` 的根目录把完整 helper 树复制到默认位置：
 
 ```powershell
 $destination = 'C:\ProgramData\Starbridge'
@@ -162,7 +225,13 @@ Starbridge 只提供本地 stdio MCP，不监听网络端口。客户端需能�
 codex mcp add starbridge -- /absolute/project/bin/starbridge serve
 ```
 
-命令路径需要替换为二进制的绝对路径。默认工具为 `vm_list`、`vm_info`、`guest_processes`、`guest_windows`、`guest_ui_tree`。需要 VM 启动、正常关机、挂起、恢复时，加 `serve --allow-vm-write`。
+命令路径需要替换为二进制的绝对路径。Homebrew 用户可在终端执行以下命令，将输出路径用于客户端配置，不要将 shell 表达式原样填入配置文件：
+
+```sh
+printf '%s\n' "$(brew --prefix starbridge)/bin/starbridge"
+```
+
+该路径通过 Homebrew 的 `opt` 链接跟随已安装版本，适合不继承终端 `PATH` 的桌面客户端；helper 安装的 `source_dir` 仍需按前文解析为物理路径。默认工具为 `vm_list`、`vm_info`、`guest_processes`、`guest_windows`、`guest_ui_tree`。需要 VM 启动、正常关机、挂起、恢复时，加 `serve --allow-vm-write`。
 
 开发工具需单独启用；如需文件类动作，先建立一个供服务使用的宿主目录：
 
