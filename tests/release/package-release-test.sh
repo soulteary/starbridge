@@ -261,6 +261,7 @@ awk '
 cat > "$temporary/bin/gh" <<'FAKE_GH'
 #!/bin/sh
 set -eu
+if [ "$1" = release ] && [ "$2" = view ]; then exit 1; fi
 printf '%s\n' "$@" > "$FAKE_GH_LOG"
 printf '%s\n' called >> "$FAKE_GH_CALLS"
 capture_notes=false
