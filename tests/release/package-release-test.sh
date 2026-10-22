@@ -261,7 +261,10 @@ awk '
 cat > "$temporary/bin/gh" <<'FAKE_GH'
 #!/bin/sh
 set -eu
-if [ "$1" = release ] && [ "$2" = view ]; then exit 1; fi
+if [ "$1" = release ] && [ "$2" = view ]; then
+  [ "${FAKE_GH_EXISTING:-false}" = true ] && exit 0
+  exit 1
+fi
 printf '%s\n' "$@" > "$FAKE_GH_LOG"
 printf '%s\n' called >> "$FAKE_GH_CALLS"
 capture_notes=false
@@ -336,6 +339,15 @@ done
 for notes_kind in missing provided empty; do
   check_publish 'synthetic tag with spaces' stable "$notes_kind"
 done
+# A release created in the GitHub UI receives the same verified archives.
+rm -f "$temporary/publish-args" "$temporary/publish-calls"
+(cd "$publish_root" && RELEASE_TAG=v1.2.3 FAKE_GH_EXISTING=true \
+  FAKE_GH_LOG="$temporary/publish-args" FAKE_GH_CALLS="$temporary/publish-calls" \
+  FAKE_GH_NOTES="$temporary/published-notes" sh "$temporary/publish-step.sh")
+printf '%s\n' release upload v1.2.3 'dist/amd64 fixture.tar.gz' \
+  'dist/arm64 fixture.tar.gz' dist/checksums.txt --clobber > "$temporary/expected-publish-args"
+cmp "$temporary/expected-publish-args" "$temporary/publish-args"
+cmp "$temporary/expected-publish-calls" "$temporary/publish-calls"
 printf 'Release packaging checks passed: %s version/argument cases; paired archives, checksums and documentation links verified.\n' "$checks"
 printf '%s\n' 'Tracked-file packaging checks passed: ignored/untracked exclusion, dirty changes, index edits and unsafe-file rejection.'
 printf '%s\n' 'Release toolchain checks passed: binary metadata and all three notice version declarations match; five mismatch cases rejected.'
