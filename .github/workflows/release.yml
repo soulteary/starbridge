@@ -72,6 +72,11 @@ jobs:
           else
             set -- "$@" --generate-notes
           fi
-          gh release create "$RELEASE_TAG" "$@" \
-            --title "Starbridge $RELEASE_TAG" \
-            dist/*.tar.gz dist/checksums.txt
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            # Support UI-created releases and safe retries of the same tag.
+            gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/checksums.txt --clobber
+          else
+            gh release create "$RELEASE_TAG" "$@" \
+              --title "Starbridge $RELEASE_TAG" \
+              dist/*.tar.gz dist/checksums.txt
+          fi
