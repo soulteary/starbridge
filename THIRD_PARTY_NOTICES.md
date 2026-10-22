@@ -2,7 +2,7 @@
 
 Starbridge 以 GPL-3.0-only 分发，见 [LICENSE](LICENSE)。本文件保留当前交付二进制所用第三方组件的许可与专利授权原文；这些上游条款不改变 Starbridge 自身的许可。
 
-本清单根据 `go.mod` 与本机 Go 二进制的模块信息核对，包含 9 个已链接的第三方 Go 模块，以及 Go 1.27.2 运行时与标准库的许可。更新依赖或构建工具链后，应同步核对本清单。分发二进制时，请一并提供本文件与项目许可证。
+本清单根据 `go.mod` 与本机 Go 二进制的模块信息核对，包含 9 个已链接的第三方 Go 模块，以及 Go 1.27.3 运行时与标准库的许可。更新依赖或构建工具链后，应同步核对本清单。分发二进制时，请一并提供本文件与项目许可证。
 
 各段原文来自对应版本模块的 `LICENSE`、可用的 `PATENTS` 文件，以及 Go 工具链的同名文件。本次检查未发现这些模块的独立 `NOTICE` 或 `COPYING` 文件。
 
@@ -19,7 +19,7 @@ MCP Go SDK 的上游许可处于迁移期，其过渡说明、Apache-2.0、保�
 - `golang.org/x/sync` `v0.20.0`
 - `golang.org/x/sys` `v0.41.0`
 - `golang.org/x/time` `v0.15.0`
-- Go runtime and standard library `go1.27.2`
+- Go runtime and standard library `go1.27.3`
 
 ## github.com/google/jsonschema-go v0.4.3
 
@@ -577,7 +577,7 @@ rights granted to you under this License for this implementation of Go
 shall terminate as of the date such litigation is filed.
 ```
 
-## Go runtime and standard library go1.27.2
+## Go runtime and standard library go1.27.3
 
 ### LICENSE
 
